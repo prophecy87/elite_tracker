@@ -1,5 +1,5 @@
-streamlit
 pandas
 yfinance
+streamlit
+pandas-ta
 alpaca-py
-pandas_ta
