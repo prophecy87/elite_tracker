@@ -57,24 +57,23 @@ def send_goal_alert(current_pnl):
 
 # ====================== STRATEGY SELECTOR ======================
 strategy = st.selectbox(
-    "🎛️ Select Trading Strategy (Live Change)",
+    "🎛️ Select Trading Strategy",
     ["Aggressive", "Neutral", "Safe", "Pause"],
     index=0
 )
 
-# Strategy Parameters
 if strategy == "Aggressive":
-    trade_freq = 0.75
+    trade_freq = 0.78
     risk_per_trade = 0.22
-    st.success("🚀 AGGRESSIVE MODE ACTIVE - High frequency & size")
+    st.success("🚀 AGGRESSIVE MODE")
 elif strategy == "Neutral":
     trade_freq = 0.45
     risk_per_trade = 0.12
-    st.info("⚖️ NEUTRAL MODE ACTIVE")
+    st.info("⚖️ NEUTRAL MODE")
 elif strategy == "Safe":
-    trade_freq = 0.22
+    trade_freq = 0.25
     risk_per_trade = 0.07
-    st.warning("🛡️ SAFE MODE ACTIVE - Conservative")
+    st.warning("🛡️ SAFE MODE")
 else:
     trade_freq = 0.0
     st.error("⏸️ BOT PAUSED")
@@ -90,16 +89,19 @@ def get_forecaster_data(watchlist):
             current_price = float(df['Close'].iloc[-1])
             ma = float(df['Close'].rolling(20).mean().iloc[-1])
             diff = (current_price - ma) / ma
-            sentiment_score = random.randint(65, 96)
+            sentiment_score = random.randint(65, 95)
             
             if diff < -0.02:
-                bias = "🔥 STRONGLY BULLISH"; signal = "BUY"
+                bias = "🔥 STRONGLY BULLISH"
+                signal = "BUY"
                 proj_price = current_price * 1.06
             elif diff > 0.02:
-                bias = "🧊 STRONGLY BEARISH"; signal = "SELL"
+                bias = "🧊 STRONGLY BEARISH"
+                signal = "SELL"
                 proj_price = current_price * 0.95
             else:
-                bias = "⚖️ NEUTRAL"; signal = "HOLD"
+                bias = "⚖️ NEUTRAL"
+                signal = "HOLD"
                 proj_price = current_price
                 
             forecasts.append({
@@ -114,78 +116,11 @@ def get_forecaster_data(watchlist):
             continue
     return forecasts
 
-# ====================== SESSION STATE ======================
-if 'trades' not in st.session_state: st.session_state.trades = []
-if 'bot_active' not in st.session_state: st.session_state.bot_active = True
-if 'daily_pnl' not in st.session_state: st.session_state.daily_pnl = 0.0
-if 'goal_reached_notified' not in st.session_state: st.session_state.goal_reached_notified = False
-
-# ====================== DASHBOARD TABS ======================
-tab1, tab2, tab3 = st.tabs(["🏛️ Live Terminal", "🔭 Strategy Forecaster", "📜 Full Ledger"])
-
-with tab1:
-    cp1, cp2, cp3 = st.columns([1, 1, 2])
-    
-    if cp1.button("🛑 STOP BOT" if st.session_state.bot_active else "▶️ START BOT", use_container_width=True):
-        st.session_state.bot_active = not st.session_state.bot_active
-        st.rerun()
-    
+# ====================== TRADE CYCLE ======================
+def run_trade_cycle():
+    tickers = ["BTC/USD", "ETH/USD", "SOL/USD", "NVDA", "TSLA"]
+    t = random.choice(tickers)
+    status_placeholder.write(f"🔍 Analyzing {t}...")
     try:
-        acc = trade_client.get_account()
-        st.session_state.daily_pnl = float(acc.equity) - float(acc.last_equity)
-        cp2.metric("Daily PnL", f"${st.session_state.daily_pnl:,.2f}")
-        
-        pnl_goal = 1000.0
-        progress = min(max(st.session_state.daily_pnl / pnl_goal, 0.0), 1.0)
-        cp3.write(f"Goal Progress: ${st.session_state.daily_pnl:,.2f} / ${pnl_goal:,.2f}")
-        cp3.progress(progress)
-        
-        if st.session_state.daily_pnl >= pnl_goal and not st.session_state.goal_reached_notified:
-            send_goal_alert(st.session_state.daily_pnl)
-            st.session_state.goal_reached_notified = True
-            st.session_state.bot_active = False
-    except:
-        pass
-
-    # Live Positions & Orders (your original)
-    p_col1, p_col2 = st.columns(2)
-    with p_col1:
-        st.subheader("📊 Live Positions")
-        try:
-            positions = trade_client.get_all_positions()
-            if positions:
-                pos_data = [{"Symbol": p.symbol, "Qty": p.qty, "Avg Entry": f"${float(p.avg_entry_price):.2f}", 
-                             "Current": f"${float(p.current_price):.2f}", "Unrealized PnL": f"${float(p.unrealized_pl):.2f}"} for p in positions]
-                st.dataframe(pd.DataFrame(pos_data), use_container_width=True, hide_index=True)
-            else:
-                st.info("No open positions.")
-        except:
-            pass
-
-with tab2:
-    st.subheader("🎯 Predictive Watchlist Signals")
-    watchlist = ["BTC/USD", "ETH/USD", "SOL/USD", "NVDA", "TSLA", "MSTR", "AMD"]
-    forecast_data = get_forecaster_data(watchlist)
-    if forecast_data:
-        st.dataframe(pd.DataFrame(forecast_data), use_container_width=True, hide_index=True)
-
-with tab3:
-    st.subheader("📜 Full Trade Ledger")
-    if st.session_state.trades:
-        st.dataframe(pd.DataFrame(st.session_state.trades)[::-1], use_container_width=True, hide_index=True)
-    else:
-        st.info("No trades yet.")
-
-# ====================== EXECUTION ENGINE ======================
-if st.session_state.bot_active and trade_freq > 0:
-    if random.random() < trade_freq:
-        # Use your original trade cycle
-        run_trade_cycle()
-        status_placeholder.success(f"✅ Trade Executed - {strategy} Mode")
-    else:
-        status_placeholder.info(f"Scanning market... ({strategy} Mode)")
-else:
-    status_placeholder.warning("⏸️ BOT PAUSED")
-
-time.sleep(25)
-st.rerun()
+        yf_ticker = t.replace("/", "-")
+        df = yf.download(yf_ticker, period="1d", interval="1m", progress=False
