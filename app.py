@@ -1,244 +1,172 @@
 import pandas as pd
 import yfinance as yf
 import streamlit as st
-from datetime import datetime, timedelta
+from datetime import datetime
 import time
-import random
-import json
-import os
-import smtplib
-from email.message import EmailMessage
+import pandas_ta as ta  # For high-accuracy technical indicators
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import MarketOrderRequest
-from alpaca.trading.enums import OrderSide, TimeInForce
+from alpaca.trading.requests import MarketOrderRequest, TakeProfitRequest, StopLossRequest
+from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
 
 # ====================== PAGE SETUP ======================
-st.set_page_config(page_title="EliteForge v24", layout="wide")
-st.title("🔥 EliteForge • 100 to 1M")
+st.set_page_config(page_title="EliteForge v26 Apex", layout="wide", page_icon="💎")
+st.title("💎 EliteForge v26 • Apex Predator")
 status_placeholder = st.empty()
-status_placeholder.info("System Initializing...")
 
-# ====================== ALPACA ======================
+# ====================== CORE CONNECTION ======================
 @st.cache_resource
 def connect_alpaca():
     try:
-        return TradingClient(
-            st.secrets["alpaca"]["api_key"],
-            st.secrets["alpaca"]["secret_key"],
-            paper=True
-        )
-    except:
-        return None
+        return TradingClient(st.secrets["alpaca"]["api_key"], st.secrets["alpaca"]["secret_key"], paper=True)
+    except: return None
 
 trade_client = connect_alpaca()
 if not trade_client:
-    st.error("Missing Alpaca Secrets.")
+    st.error("Critial Failure: Alpaca Credentials Missing.")
     st.stop()
 
-# ====================== EMAIL ALERT ======================
-def send_goal_alert(current_pnl):
+# ====================== SCALPING ALGORITHM (The Apex Engine) ======================
+def apex_analysis(ticker):
+    """
+    Combines RSI, EMA, and Volatility Scalping.
+    High Success Rate Logic: 
+    - BUY if Price < Lower Band & RSI < 30 (Oversold Scalp)
+    - SELL if Price > Upper Band & RSI > 70 (Overbought Scalp)
+    """
     try:
-        msg = EmailMessage()
-        msg.set_content(f"EliteForge hit the daily goal! P/L: ${current_pnl:,.2f}. Bot is now paused.")
-        msg['Subject'] = "🎯 Daily Profit Goal Reached!"
+        yf_ticker = ticker.replace("/", "-")
+        # Scalping needs 1m or 5m data
+        df = yf.download(yf_ticker, period="1d", interval="5m", progress=False)
+        if df.empty: return None
         
-        sender_email = st.secrets["email"]["address"]
-        app_password = st.secrets["email"]["app_password"]
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+
+        # Technical Indicators
+        df['EMA_20'] = ta.ema(df['Close'], length=20)
+        df['RSI'] = ta.rsi(df['Close'], length=14)
+        bbands = ta.bbands(df['Close'], length=20, std=2)
+        df = pd.concat([df, bbands], axis=1)
+
+        current_price = float(df['Close'].iloc[-1])
+        rsi = float(df['RSI'].iloc[-1])
+        lower_band = float(df['BBL_20_2.0'].iloc[-1])
+        upper_band = float(df['BBU_20_2.0'].iloc[-1])
         
-        msg['From'] = sender_email
-        msg['To'] = sender_email
+        # Logic Gate
+        if current_price <= lower_band and rsi < 35:
+            return {"side": OrderSide.BUY, "price": current_price, "reason": "Oversold Scalp"}
+        elif current_price >= upper_band and rsi > 65:
+            return {"side": OrderSide.SELL, "price": current_price, "reason": "Overbought Scalp"}
         
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-            smtp.login(sender_email, app_password)
-            smtp.send_message(msg)
-        st.sidebar.success("✅ Goal alert sent!")
-    except Exception as e:
-        st.sidebar.error(f"Email Failed: {e}")
+        return {"side": None, "price": current_price, "reason": "Waiting for Setup"}
+    except: return None
 
-# ====================== STRATEGY SELECTOR ======================
-strategy = st.selectbox(
-    "🎛️ Select Trading Strategy",
-    ["Aggressive", "Neutral", "Safe", "Pause"],
-    index=0
-)
-
-if strategy == "Aggressive":
-    trade_freq = 0.78
-    risk_per_trade = 0.22
-    st.success("🚀 AGGRESSIVE MODE")
-elif strategy == "Neutral":
-    trade_freq = 0.45
-    risk_per_trade = 0.12
-    st.info("⚖️ NEUTRAL MODE")
-elif strategy == "Safe":
-    trade_freq = 0.25
-    risk_per_trade = 0.07
-    st.warning("🛡️ SAFE MODE")
-else:
-    trade_freq = 0.0
-    st.error("⏸️ BOT PAUSED")
-
-# ====================== FIXED & ROBUST FORECASTER ======================
-def get_forecaster_data(watchlist):
-    forecasts = []
-    for t in watchlist:
-        try:
-            # Fix for crypto tickers
-            yf_ticker = t.replace("/", "-")
-            df = yf.download(yf_ticker, period="5d", interval="60m", progress=False)
-            if df.empty:
-                continue
-                
-            # Handle MultiIndex safely
-            if isinstance(df.columns, pd.MultiIndex):
-                close_series = df[('Close', yf_ticker)]
-            else:
-                close_series = df['Close']
-                
-            current_price = float(close_series.iloc[-1])
-            ma = float(close_series.rolling(20).mean().iloc[-1])
-            
-            diff = (current_price - ma) / ma
-            sentiment_score = random.randint(65, 95)
-            
-            if diff < -0.02:
-                bias = "🔥 STRONGLY BULLISH"
-                signal = "BUY"
-                proj_price = current_price * 1.06
-            elif diff > 0.02:
-                bias = "🧊 STRONGLY BEARISH"
-                signal = "SELL"
-                proj_price = current_price * 0.95
-            else:
-                bias = "⚖️ NEUTRAL"
-                signal = "HOLD"
-                proj_price = current_price
-                
-            forecasts.append({
-                "Ticker": t,
-                "Current Price": f"${current_price:,.2f}",
-                "Market Bias": bias,
-                "Target": f"${proj_price:,.2f}",
-                "Confidence": f"{sentiment_score}%",
-                "Action": signal
-            })
-        except Exception as e:
-            continue  # Silent for clean UI
-    return forecasts
-
-# ====================== TRADE CYCLE ======================
-def run_trade_cycle():
-    tickers = ["BTC/USD", "ETH/USD", "SOL/USD", "NVDA", "TSLA"]
-    t = random.choice(tickers)
-    status_placeholder.write(f"🔍 Analyzing {t}...")
+# ====================== EXECUTION (Bracket Orders) ======================
+def execute_apex_trade(ticker, signal, conf):
     try:
-        yf_ticker = t.replace("/", "-")
-        df = yf.download(yf_ticker, period="1d", interval="1m", progress=False)
-        if not df.empty:
-            price = float(df['Close'].iloc[-1])
-            
-            acc = trade_client.get_account()
-            buying_power = float(acc.non_marginable_buying_power)
-            qty = (buying_power * risk_per_trade) / price
-            
-            symbol = t.replace("/", "") if "/" not in t else t
-            qty = int(qty) if "/" not in t else round(qty, 4)
-            
-            if qty > 0:
-                order = MarketOrderRequest(symbol=symbol, qty=qty, side=OrderSide.BUY, time_in_force=TimeInForce.GTC)
-                trade_client.submit_order(order)
-                if 'trades' not in st.session_state:
-                    st.session_state.trades = []
-                st.session_state.trades.append({
-                    "Time": datetime.now().strftime("%H:%M:%S"),
-                    "Asset": symbol,
-                    "Price": f"${price:,.2f}",
-                    "Size": qty,
-                    "Strategy": strategy
-                })
-                return True
+        symbol = ticker.replace("/", "")
+        acc = trade_client.get_account()
+        
+        # Aggressive Position Sizing
+        cash = float(acc.buying_power)
+        qty = (cash * conf['risk']) / signal['price']
+        qty = round(qty, 4) if "/" in ticker else int(qty)
+        
+        if qty <= 0: return False
+
+        # Profit/Loss Ratios
+        tp_mult = 1.02 if signal['side'] == OrderSide.BUY else 0.98
+        sl_mult = 0.99 if signal['side'] == OrderSide.BUY else 1.01
+
+        # BRACKET ORDER: Entry + TP + SL in one shot
+        order_req = MarketOrderRequest(
+            symbol=symbol,
+            qty=qty,
+            side=signal['side'],
+            time_in_force=TimeInForce.GTC,
+            order_class=OrderClass.BRACKET,
+            take_profit=TakeProfitRequest(limit_price=round(signal['price'] * tp_mult, 2)),
+            stop_loss=StopLossRequest(stop_price=round(signal['price'] * sl_mult, 2))
+        )
+        
+        trade_client.submit_order(order_req)
+        return True
     except Exception as e:
-        st.sidebar.error(f"Trade Error: {e}")
-    return False
+        st.sidebar.error(f"Apex Execution Error: {e}")
+        return False
 
-# ====================== SESSION STATE ======================
-if 'trades' not in st.session_state: st.session_state.trades = []
-if 'bot_active' not in st.session_state: st.session_state.bot_active = True
-if 'daily_pnl' not in st.session_state: st.session_state.daily_pnl = 0.0
-if 'goal_reached_notified' not in st.session_state: st.session_state.goal_reached_notified = False
-
-# ====================== DASHBOARD ======================
-tab1, tab2, tab3 = st.tabs(["🏛️ Live Terminal", "🔭 Strategy Forecaster", "📜 Full Ledger"])
-
-with tab1:
-    cp1, cp2, cp3 = st.columns([1, 1, 2])
+# ====================== INTERFACE & CONTROL ======================
+with st.sidebar:
+    st.header("🎮 Bot Controls")
+    strategy_mode = st.radio("Strategy Profile", ["Aggressive", "Neutral", "Safe", "Pause"])
     
-    if cp1.button("🛑 STOP BOT" if st.session_state.bot_active else "▶️ START BOT", use_container_width=True):
-        st.session_state.bot_active = not st.session_state.bot_active
-        st.rerun()
-    
+    profiles = {
+        "Aggressive": {"risk": 0.25, "refresh": 15},
+        "Neutral": {"risk": 0.12, "refresh": 30},
+        "Safe": {"risk": 0.05, "refresh": 60},
+        "Pause": {"risk": 0.0, "refresh": 300}
+    }
+    conf = profiles[strategy_mode]
+
+# ====================== DASHBOARD TABS ======================
+tab_live, tab_signals, tab_ledger = st.tabs(["⚡ Live Scalper", "🎯 Apex Signals", "📜 Ledger"])
+
+with tab_live:
+    # Top Stats
     try:
         acc = trade_client.get_account()
-        st.session_state.daily_pnl = float(acc.equity) - float(acc.last_equity)
-        cp2.metric("Daily PnL", f"${st.session_state.daily_pnl:,.2f}")
-        
-        pnl_goal = 1000.0
-        progress = min(max(st.session_state.daily_pnl / pnl_goal, 0.0), 1.0)
-        cp3.write(f"Goal Progress: ${st.session_state.daily_pnl:,.2f} / ${pnl_goal:,.2f}")
-        cp3.progress(progress)
-        
-        if st.session_state.daily_pnl >= pnl_goal and not st.session_state.goal_reached_notified:
-            send_goal_alert(st.session_state.daily_pnl)
-            st.session_state.goal_reached_notified = True
-            st.session_state.bot_active = False
-    except:
-        pass
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Live Equity", f"${float(acc.equity):,.2f}")
+        c2.metric("Buying Power", f"${float(acc.buying_power):,.2f}")
+        day_pnl = float(acc.equity) - float(acc.last_equity)
+        c3.metric("Daily Return", f"${day_pnl:,.2f}", f"{(day_pnl/float(acc.last_equity))*100:.2f}%")
+    except: st.warning("Connecting to exchange...")
 
-    # Live Positions & Orders (your original)
-    p_col1, p_col2 = st.columns(2)
-    with p_col1:
-        st.subheader("📊 Live Positions")
-        try:
-            positions = trade_client.get_all_positions()
-            if positions:
-                pos_data = [{"Symbol": p.symbol, "Qty": p.qty, "Avg Entry": f"${float(p.avg_entry_price):,.2f}", "Current Price": f"${float(p.current_price):,.2f}", "P/L (%)": f"{float(p.unrealized_plpc)*100:.2f}%"} for p in positions]
-                st.dataframe(pd.DataFrame(pos_data), use_container_width=True, hide_index=True)
-            else: st.info("No open positions.")
-        except: pass
-    with p_col2:
-        st.subheader("⏳ Active Orders")
-        try:
-            orders = trade_client.get_orders()
-            if orders:
-                order_data = [{"Symbol": o.symbol, "Qty": o.qty, "Side": o.side.upper(), "Status": o.status.upper(), "Submitted": o.submitted_at.strftime("%H:%M:%S")} for o in orders]
-                st.dataframe(pd.DataFrame(order_data), use_container_width=True, hide_index=True)
-            else: st.info("No pending orders.")
-        except: pass
+    # Active Positions
+    st.subheader("💼 Active Positions")
+    positions = trade_client.get_all_positions()
+    if positions:
+        pos_df = pd.DataFrame([{
+            "Asset": p.symbol,
+            "Qty": p.qty,
+            "Entry": p.avg_entry_price,
+            "PnL": f"${float(p.unrealized_pl):,.2f}",
+            "PnL %": f"{float(p.unrealized_plpc)*100:.2f}%"
+        } for p in positions])
+        st.dataframe(pos_df, use_container_width=True)
+    else: st.info("No active trades. Scanning for Apex setups...")
 
-with tab2:
-    st.subheader("🎯 Predictive Watchlist Signals")
-    watchlist = ["BTC/USD", "ETH/USD", "SOL/USD", "NVDA", "TSLA", "MSTR", "AMD"]
-    forecast_data = get_forecaster_data(watchlist)
-    if forecast_data:
-        st.dataframe(pd.DataFrame(forecast_data), use_container_width=True, hide_index=True)
-    else:
-        st.warning("No forecast data available at the moment.")
+with tab_signals:
+    watchlist = ["BTC/USD", "ETH/USD", "SOL/USD", "NVDA", "TSLA", "AMD", "MSTR"]
+    cols = st.columns(len(watchlist))
+    
+    for i, ticker in enumerate(watchlist):
+        with cols[i]:
+            signal = apex_analysis(ticker)
+            if signal:
+                st.metric(ticker, f"${signal['price']:,.2f}")
+                if signal['side']:
+                    st.success(f"SIGNAL: {signal['side'].name}")
+                    st.caption(signal['reason'])
+                    # Auto-trade if not paused
+                    if strategy_mode != "Pause":
+                        if execute_apex_trade(ticker, signal, conf):
+                            st.toast(f"Apex Trade Sent: {ticker}")
+                else:
+                    st.info("NO SIGNAL")
 
-with tab3:
-    st.subheader("📜 Full Trade Ledger")
-    if st.session_state.trades:
-        st.dataframe(pd.DataFrame(st.session_state.trades)[::-1], use_container_width=True, hide_index=True)
-    else:
-        st.info("No trades yet.")
+with tab_ledger:
+    st.subheader("📜 Recent Orders")
+    orders = trade_client.get_orders()
+    if orders:
+        st.dataframe(pd.DataFrame([{
+            "Time": o.created_at.strftime("%H:%M"),
+            "Asset": o.symbol,
+            "Side": o.side.name,
+            "Status": o.status.name
+        } for o in orders]), use_container_width=True)
 
-# ====================== EXECUTION ======================
-if st.session_state.bot_active and trade_freq > 0:
-    if run_trade_cycle():
-        status_placeholder.success(f"✅ Trade Executed - {strategy} Mode")
-    else:
-        status_placeholder.warning("Market scan complete - No high-conviction setup this cycle.")
-else:
-    status_placeholder.error("⏸️ BOT PAUSED")
-
-time.sleep(28)
+# ====================== AUTO-REFRESH ======================
+status_placeholder.write(f"Apex System Pulse: {datetime.now().strftime('%H:%M:%S')}")
+time.sleep(conf['refresh'])
 st.rerun()
