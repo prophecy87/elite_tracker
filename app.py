@@ -94,12 +94,70 @@ def get_forecaster_data(watchlist):
 tab1, tab2, tab3 = st.tabs(["🏛️ Live Terminal", "🔭 Strategy Forecaster", "📜 Full Ledger"])
 
 with tab1:
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.metric("Real Alpaca Balance", f"${st.session_state.balance:,.2f}")
-        st.progress(min(st.session_state.balance / 1000000.0, 1.0))
-    with col2:
-        st.success("🟢 BOT ACTIVE")
+    # 1. LIVE ACCOUNT METRICS GRID
+    try:
+        acc = trade_client.get_account()
+        equity = float(acc.equity)
+        bp = float(acc.buying_power)
+        cash = float(acc.cash)
+        
+        m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+        m_col1.metric("Portfolio Value", f"${equity:,.2f}")
+        m_col2.metric("Buying Power", f"${bp:,.2f}")
+        m_col3.metric("Cash Balance", f"${cash:,.2f}")
+        m_col4.metric("Bot Health", "🟢 ACTIVE")
+        
+        st.divider()
+    except Exception as e:
+        st.error(f"Error fetching account metrics: {e}")
+
+    # 2. DUAL TABLES: POSITIONS & ORDERS
+    p_col1, p_col2 = st.columns(2)
+    
+    with p_col1:
+        st.subheader("📊 Live Positions")
+        try:
+            positions = trade_client.get_all_positions()
+            if positions:
+                pos_data = [{
+                    "Symbol": p.symbol,
+                    "Qty": p.qty,
+                    "Avg Entry": f"${float(p.avg_entry_price):,.2f}",
+                    "Current Price": f"${float(p.current_price):,.2f}",
+                    "P/L (%)": f"{float(p.unrealized_plpc)*100:.2f}%",
+                    "Market Value": f"${float(p.market_value):,.2f}"
+                } for p in positions]
+                st.dataframe(pd.DataFrame(pos_data), use_container_width=True, hide_index=True)
+            else:
+                st.info("No open positions.")
+        except Exception as e:
+            st.error(f"Positions Error: {e}")
+
+    with p_col2:
+        st.subheader("⏳ Active Orders")
+        try:
+            # Fetches only open orders from Alpaca
+            orders = trade_client.get_orders()
+            if orders:
+                order_data = [{
+                    "Symbol": o.symbol,
+                    "Qty": o.qty,
+                    "Side": o.side.upper(),
+                    "Type": o.order_type.upper(),
+                    "Status": o.status.upper(),
+                    "Submitted": o.submitted_at.strftime("%H:%M:%S")
+                } for o in orders]
+                st.dataframe(pd.DataFrame(order_data), use_container_width=True, hide_index=True)
+            else:
+                st.info("No pending orders.")
+        except Exception as e:
+            st.error(f"Orders Error: {e}")
+
+    st.divider()
+    
+    # 3. INTERNAL BOT PROGRESS (Keeping your original logic here)
+    st.write("### 🤖 Bot Activity Progress")
+    st.progress(min(st.session_state.balance / 1000000.0, 1.0))
 
 with tab2:
     st.subheader("🎯 Predictive Watchlist Signals")
