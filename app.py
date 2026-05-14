@@ -3,72 +3,56 @@ import yfinance as yf
 import streamlit as st
 from datetime import datetime
 import time
+import random
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 
-st.set_page_config(page_title="EliteTracker • Live PnL", layout="wide")
-st.title("🔥 EliteTracker • Live PnL Dashboard")
-st.caption("Real Alpaca Balance + Real-time Unrealized PnL")
+st.set_page_config(page_title="EliteTracker • Aggressive", layout="wide")
+st.title("🔥 EliteTracker • AGGRESSIVE MODE")
+st.caption("High Risk / High Reward • Max Aggression")
 
 # ====================== ALPACA CONNECTION ======================
 try:
     API_KEY = st.secrets["alpaca"]["api_key"]
     SECRET_KEY = st.secrets["alpaca"]["secret_key"]
     trade_client = TradingClient(API_KEY, SECRET_KEY, paper=True)
-    st.sidebar.success("✅ Connected to Alpaca Paper")
+    st.sidebar.success("✅ Alpaca Paper Connected")
 except:
-    st.error("❌ Alpaca keys not found")
+    st.error("❌ Keys not found. Check Streamlit Secrets.")
     st.stop()
 
-# ====================== REAL BALANCE + POSITIONS ======================
-def get_account_info():
+# ====================== BALANCE ======================
+def get_balance():
     try:
-        account = trade_client.get_account()
-        positions = trade_client.get_all_positions()
-        return float(account.cash), positions
+        acc = trade_client.get_account()
+        return float(acc.cash)
     except:
-        return 100.0, []
+        return st.session_state.get("balance", 100.0)
 
-cash, positions = get_account_info()
-total_balance = cash + sum(float(p.market_value) for p in positions)
+if 'balance' not in st.session_state:
+    st.session_state.balance = get_balance()
 
-st.subheader(f"💰 Total Portfolio Value: ${total_balance:,.2f}")
-st.metric("Cash", f"${cash:,.2f}")
+st.subheader(f"💰 Real Alpaca Balance: ${st.session_state.balance:,.2f} / $1,000,000")
+st.progress(min(st.session_state.balance / 1000000.0, 1.0))
 
-col1, col2 = st.columns(2)
-col1.metric("Unrealized PnL", f"${sum(float(p.unrealized_pl) for p in positions):,.2f}")
-col2.metric("Open Positions", len(positions))
+if st.button("🔄 Refresh Balance"):
+    st.session_state.balance = get_balance()
+    st.rerun()
 
-# ====================== OPEN POSITIONS WITH REAL-TIME PnL ======================
-st.write("### 📍 Open Positions (Live PnL)")
-if positions:
-    pos_data = []
-    for p in positions:
-        unrealized = float(p.unrealized_pl)
-        unrealized_pct = float(p.unrealized_plpc) * 100
-        pos_data.append({
-            "Symbol": p.symbol,
-            "Qty": int(p.qty),
-            "Entry Price": f"${float(p.avg_entry_price):.2f}",
-            "Current Price": f"${float(p.current_price):.2f}",
-            "Unrealized PnL": f"${unrealized:,.2f}",
-            "PnL %": f"{unrealized_pct:.2f}%",
-            "Market Value": f"${float(p.market_value):,.2f}"
-        })
-    st.dataframe(pd.DataFrame(pos_data), width='stretch', hide_index=True)
-else:
-    st.info("No open positions yet.")
-
-# ====================== AUTO TRADING ======================
-def auto_trade():
-    if random.random() < 0.58:
-        tickers = ["NVDA", "TSLA", "BTC-USD", "ETH-USD", "SOL-USD"]
+# ====================== AGGRESSIVE AUTO TRADING ======================
+def auto_aggressive_trade():
+    if random.random() < 0.82:   # High frequency
+        tickers = ["NVDA", "TSLA", "BTC-USD", "ETH-USD", "SOL-USD", "MSTR"]
         ticker = random.choice(tickers)
+        
         try:
             price = float(yf.download(ticker, period="5d", progress=False)['Close'].iloc[-1])
-            qty = max(1, int(total_balance * 0.10 / price))  # 10% risk
-
+            
+            # Aggressive sizing
+            max_dollars = st.session_state.balance * 0.25
+            qty = max(1, int(max_dollars / price))
+            
             order = MarketOrderRequest(
                 symbol=ticker.replace("-USD", ""),
                 qty=qty,
@@ -76,18 +60,25 @@ def auto_trade():
                 time_in_force=TimeInForce.DAY
             )
             trade_client.submit_order(order)
-            st.success(f"✅ Auto Bought {qty} {ticker}")
+            
+            st.success(f"🚀 AGGRESSIVE BUY: {qty} {ticker} @ ${price:,.2f}")
+            
         except:
             pass
 
-auto_trade()
+auto_aggressive_trade()
 
-st.success("✅ Auto Trading Active • Live PnL Updating")
+st.success("✅ Ultra Aggressive Auto Mode Running")
 
-if st.button("🔄 Refresh All Data"):
-    st.rerun()
+# Recent activity placeholder
+if 'history' not in st.session_state:
+    st.session_state.history = []
 
-st.caption("❤️ Balance and PnL are pulled live from Alpaca. The bot keeps trading automatically.")
+if st.session_state.history:
+    st.write("### Recent Trades")
+    st.dataframe(pd.DataFrame(st.session_state.history[-10:])[::-1], width='stretch', hide_index=True)
 
-time.sleep(20)
+st.caption("❤️ The bot is now running aggressively. Keep this page open or use UptimeRobot.")
+
+time.sleep(18)
 st.rerun()
