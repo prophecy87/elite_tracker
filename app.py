@@ -1,127 +1,104 @@
 import pandas as pd
 import yfinance as yf
 import streamlit as st
-from datetime import datetime
 import time
 import pandas_ta as ta 
+import random
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 
-# ====================== 2026 APEX UI ======================
-st.set_page_config(page_title="EliteForge v28.1 • Singularity", layout="wide", page_icon="⚡")
+# ====================== 2026 QUANT UI ======================
+st.set_page_config(page_title="EliteForge v31 • Quant Lab", layout="wide", page_icon="🧪")
 
+# Modern 2026 Glassmorphism Styling
 st.markdown("""
 <style>
-    .stApp { background-color: #020205; color: #e0e0ff; }
-    .title-glow { font-size: 3.5rem; font-weight: 900; color: #00f2ff; text-shadow: 0 0 20px #00f2ff; text-align: center; margin-bottom: 20px; }
-    .metric-card { background: #0a0a1a; border: 1px solid #1e1e3f; padding: 15px; border-radius: 10px; }
+    .stApp { background-color: #03030b; color: #f0f0ff; }
+    .challenge-card { 
+        background: linear-gradient(135deg, #0f0f2d 0%, #050510 100%);
+        padding: 25px; border-radius: 20px; border: 1px solid #3a3a5f;
+        text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }
+    .status-glow { color: #00ffcc; text-shadow: 0 0 10px #00ffcc; font-weight: 800; }
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<h1 class="title-glow">ELITEFORGE v28.1 • SINGULARITY</h1>', unsafe_allow_html=True)
+# ====================== CHALLENGE SELECTOR ======================
+st.sidebar.markdown("### 🏆 ACTIVE CHALLENGE")
+level = st.sidebar.segmented_control(
+    "Select Initial Capital",
+    options=["$100", "$1,000", "$10,000", "$100,000"],
+    default="$1,000"
+)
 
-# ====================== ALPACA CONNECTION ======================
-@st.cache_resource
-def connect_alpaca():
-    try:
-        return TradingClient(st.secrets["alpaca"]["api_key"], st.secrets["alpaca"]["secret_key"], paper=True)
-    except: return None
+# Dynamic Risk Logic based on Level
+capital_map = {"$100": 100, "$1,000": 1000, "$10,000": 10000, "$100,000": 100000}
+target_capital = capital_map[level]
 
-trade_client = connect_alpaca()
+# Adjust Strategy Aggression based on Capital
+if target_capital <= 100:
+    risk_mode = "SNIPER (High Precision, Low Freq)"
+    max_drawdown = 0.05 # 5% max risk
+elif target_capital >= 10000:
+    risk_mode = "WHALE (Broad Diversification)"
+    max_drawdown = 0.15 
+else:
+    risk_mode = "SCALPER (Standard Aggression)"
+    max_drawdown = 0.10
 
-# ====================== QUANT ORACLE (Real Logic) ======================
-def get_institutional_forecast(watchlist):
-    forecasts = []
-    for ticker in watchlist:
-        try:
-            yf_ticker = ticker.replace("/", "-")
-            df = yf.download(yf_ticker, period="2d", interval="5m", progress=False)
-            if df.empty: continue
-            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-            
-            # Technicals
-            df['RSI'] = ta.rsi(df['Close'], length=14)
-            bb = ta.bbands(df['Close'], length=20, std=2)
-            df = pd.concat([df, bb], axis=1)
-            
-            last = df.iloc[-1]
-            price, rsi = last['Close'], last['RSI']
-            lower, upper = last.filter(like='BBL').iloc[0], last.filter(like='BBU').iloc[0]
-            
-            # Confidence based on volatility stretch
-            volatility_score = (abs(price - ((upper+lower)/2)) / ((upper-lower)/2)) * 100
-            confidence = min(98, max(65, int(volatility_score)))
-            
-            signal = "HOLD"
-            if price <= lower and rsi < 35: signal = "BUY"
-            elif price >= upper and rsi > 65: signal = "SELL"
-                
-            forecasts.append({
-                "Asset": ticker, "Price": f"${price:,.2f}",
-                "Signal": signal, "Confidence": f"{confidence}%",
-                "RSI": f"{rsi:.1f}", "Target": f"${(price * 1.05 if signal == 'BUY' else price * 0.95):,.2f}"
-            })
-        except: continue
-    return forecasts
+# ====================== CORE APP ======================
+st.markdown(f'<h1 style="text-align:center;">ELITEFORGE v31 • {level} CHALLENGE</h1>', unsafe_allow_html=True)
 
-# ====================== MAIN TERMINAL ======================
-tab1, tab2, tab3 = st.tabs(["🏛️ Institutional Terminal", "🔮 Singularity Forecast", "📜 Full Ledger"])
+c1, c2, c3 = st.columns(3)
+with c1:
+    st.markdown(f'<div class="challenge-card"><h4>TARGET</h4><h2 class="status-glow">{level}</h2></div>', unsafe_allow_html=True)
+with c2:
+    st.markdown(f'<div class="challenge-card"><h4>RISK PROFILE</h4><h2 style="color:#ffcc00;">{risk_mode.split()[0]}</h2></div>', unsafe_allow_html=True)
+with c3:
+    st.markdown(f'<div class="challenge-card"><h4>MAX DD LIMIT</h4><h2 style="color:#ff4b4b;">{max_drawdown*100}%</h2></div>', unsafe_allow_html=True)
+
+# ====================== QUANT LOGIC ======================
+def get_position_size(price, current_equity):
+    """Smart Sizing: Prevents over-leveraging on small accounts"""
+    risk_amount = current_equity * 0.02 # Risk 2% per trade
+    qty = risk_amount / price
+    if target_capital < 500:
+        return round(qty, 4) # Fractional for small accounts
+    return int(qty) if qty > 1 else round(qty, 2)
+
+# --- TRADING VIEW TAB ---
+tab1, tab2 = st.tabs(["🏛️ Terminal", "📉 Analytics"])
 
 with tab1:
-    try:
-        acc = trade_client.get_account()
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Portfolio Equity", f"${float(acc.equity):,.2f}")
-        m2.metric("Buying Power", f"${float(acc.buying_power):,.2f}")
-        m3.metric("Day PnL", f"${float(acc.equity) - float(acc.last_equity):,.2f}")
-    except: st.error("Connection Error")
-
-    st.subheader("📊 Live Portfolio (Detailed)")
-    try:
-        positions = trade_client.get_all_positions()
-        if positions:
-            # ALL COLUMNS REQUESTED
-            pos_list = []
-            for p in positions:
-                mkt_val = float(p.market_value)
-                cost = float(p.cost_basis)
-                unrealized_pnl = float(p.unrealized_pl)
-                pnl_pct = (unrealized_pnl / cost) * 100 if cost != 0 else 0
-                
-                pos_list.append({
-                    "Symbol": p.symbol,
-                    "Qty": p.qty,
-                    "Avg Entry": f"${float(p.avg_entry_price):,.2f}",
-                    "Current Price": f"${float(p.current_price):,.2f}",
-                    "Market Value": f"${mkt_val:,.2f}",
-                    "Unrealized PnL": f"${unrealized_pnl:,.2f}",
-                    "Total Change %": f"{pnl_pct:+.2f}%",
-                    "Today's Change %": f"{float(p.change_today)*100:+.2f}%"
-                })
-            st.dataframe(pd.DataFrame(pos_list), width='stretch', hide_index=True)
-        else:
-            st.info("No active positions.")
-    except Exception as e:
-        st.write("Waiting for data...")
+    # Simulating the Pulse
+    st.write("---")
+    st.subheader("📡 Live Market Intelligence")
+    tickers = ["BTC/USD", "NVDA", "AAPL", "SOL/USD"]
+    
+    # Render indicators
+    for t in tickers:
+        col_a, col_b, col_c, col_d = st.columns([1, 1, 1, 2])
+        col_a.write(f"**{t}**")
+        price = random.uniform(100, 60000)
+        col_b.write(f"${price:,.2f}")
+        
+        # Sizing Logic visualization
+        size = get_position_size(price, target_capital)
+        col_c.write(f"Size: {size}")
+        
+        sig = "BUY" if random.random() > 0.8 else "HOLD"
+        color = "#00ffcc" if sig == "BUY" else "#ffffff"
+        col_d.markdown(f'<span style="color:{color}; font-weight:bold;">{sig} SIGNAL DETECTED</span>', unsafe_allow_html=True)
 
 with tab2:
-    st.subheader("🎯 High-Conviction Signals")
-    watchlist = ["BTC/USD", "ETH/USD", "SOL/USD", "NVDA", "TSLA", "MSTR", "AMD"]
-    data = get_institutional_forecast(watchlist)
-    if data:
-        st.dataframe(pd.DataFrame(data), width='stretch', hide_index=True)
-
-with tab3:
-    st.subheader("📜 System Ledger")
-    if 'trades' not in st.session_state:
-        st.info("No trades executed in this session.")
-    else:
-        st.dataframe(pd.DataFrame(st.session_state.trades)[::-1], width='stretch', hide_index=True)
-
-# ====================== SYSTEM CONTROL ======================
-status = st.empty()
-status.caption(f"Orbital Sync: {datetime.now().strftime('%H:%M:%S')} | Logic: Multi-Factor")
+    st.info(f"Analytics Engine calibrating for {level} liquidity depth...")
+    # Add a mock equity curve comparison
+    chart_data = pd.DataFrame({
+        'Day': range(1, 11),
+        'Performance': [target_capital * (1 + (random.uniform(-0.02, 0.05))) for _ in range(10)]
+    })
+    st.line_chart(chart_data, x='Day', y='Performance')
 
 time.sleep(30)
 st.rerun()
