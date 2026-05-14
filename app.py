@@ -178,4 +178,38 @@ with tab1:
         
         pnl_goal = 1000.0
         progress = min(max(st.session_state.daily_pnl / pnl_goal, 0.0), 1.0)
-        cp3.write(f"Goal Progress: ${st.session_state.daily_p
+        cp3.write(f"Goal Progress: ${st.session_state.daily_pnl:,.2f} / ${pnl_goal:,.2f}")
+        cp3.progress(progress)
+        
+        if st.session_state.daily_pnl >= pnl_goal and not st.session_state.goal_reached_notified:
+            send_goal_alert(st.session_state.daily_pnl)
+            st.session_state.goal_reached_notified = True
+            st.session_state.bot_active = False
+    except:
+        pass
+
+with tab2:
+    st.subheader("🎯 Predictive Watchlist Signals")
+    watchlist = ["BTC/USD", "ETH/USD", "SOL/USD", "NVDA", "TSLA", "MSTR", "AMD"]
+    forecast_data = get_forecaster_data(watchlist)
+    if forecast_data:
+        st.dataframe(pd.DataFrame(forecast_data), use_container_width=True, hide_index=True)
+
+with tab3:
+    st.subheader("📜 Full Trade Ledger")
+    if st.session_state.trades:
+        st.dataframe(pd.DataFrame(st.session_state.trades)[::-1], use_container_width=True, hide_index=True)
+    else:
+        st.info("No trades yet.")
+
+# ====================== EXECUTION ======================
+if st.session_state.bot_active and trade_freq > 0:
+    if run_trade_cycle():
+        status_placeholder.success(f"✅ Trade Executed - {strategy} Mode")
+    else:
+        status_placeholder.warning("Market scan complete - No high-conviction setup this cycle.")
+else:
+    status_placeholder.error("⏸️ BOT PAUSED")
+
+time.sleep(28)
+st.rerun()
