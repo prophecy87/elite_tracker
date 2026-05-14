@@ -90,6 +90,88 @@ def get_forecaster_data(watchlist):
         except: continue
     return forecasts
 
+import smtplib
+from email.message import EmailMessage
+
+# 1. NEW SESSION STATE KEYS
+if 'bot_active' not in st.session_state: st.session_state.bot_active = True
+if 'daily_pnl' not in st.session_state: st.session_state.daily_pnl = 0.0
+if 'goal_reached_notified' not in st.session_state: st.session_state.goal_reached_notified = False
+
+# 2. EMAIL NOTIFICATION FUNCTION
+# 2. EMAIL NOTIFICATION FUNCTION (Updated for Secrets)
+def send_goal_alert(current_pnl):
+    msg = EmailMessage()
+    msg.set_content(f"EliteForge hit the daily goal! P/L: ${current_pnl:,.2f}. Bot is now paused.")
+    msg['Subject'] = "🎯 Daily Profit Goal Reached!"
+    
+    # Fetching email and password from Streamlit Secrets
+    sender_email = st.secrets["email"]["address"]
+    app_password = st.secrets["email"]["app_password"]
+    
+    msg['From'] = sender_email
+    msg['To'] = sender_email # Sending to yourself
+    
+    try:
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+            smtp.login(sender_email, app_password)
+            smtp.send_message(msg)
+    except Exception as e:
+        st.sidebar.error(f"Email Failed: {e}")
+
+# 3. CONTROL PANEL (Top of Tab 1)
+with tab1:
+    cp1, cp2, cp3 = st.columns([1, 1, 2])
+    
+    # Start/Stop Button
+    if st.session_state.bot_active:
+        if cp1.button("🛑 STOP BOT", use_container_width=True):
+            st.session_state.bot_active = False
+            st.rerun()
+    else:
+        if cp1.button("▶️ START BOT", use_container_width=True):
+            st.session_state.bot_active = True
+            st.session_state.goal_reached_notified = False # Reset notification
+            st.rerun()
+
+    # Daily PnL Tracker
+    try:
+        # Fetching today's performance from Alpaca
+        acc = trade_client.get_account()
+        st.session_state.daily_pnl = float(acc.equity) - float(acc.last_equity)
+        
+        cp2.metric("Daily PnL", f"${st.session_state.daily_pnl:,.2f}", 
+                  delta=f"{st.session_state.daily_pnl:,.2f}")
+        
+        # Goal Logic
+        pnl_goal = 1000.0
+        progress = min(max(st.session_state.daily_pnl / pnl_goal, 0.0), 1.0)
+        cp3.write(f"Goal Progress: ${st.session_state.daily_pnl:,.2f} / ${pnl_goal:,.2f}")
+        cp3.progress(progress)
+
+        if st.session_state.daily_pnl >= pnl_goal:
+            st.session_state.bot_active = False
+            if not st.session_state.goal_reached_notified:
+                send_goal_alert(st.session_state.daily_pnl)
+                st.session_state.goal_reached_notified = True
+            st.warning("🎯 DAILY GOAL REACHED. Bot paused. Check email for confirmation.")
+            
+    except Exception as e:
+        st.error(f"PnL Fetch Error: {e}")
+
+# 4. MODIFIED EXECUTION TRIGGER
+# Wrap your execution logic at the bottom of the script in this check:
+if st.session_state.bot_active:
+    if run_trade_cycle():
+        status_placeholder.success(f"✅ Trade Executed at {datetime.now().strftime('%H:%M:%S')}")
+    else:
+        status_placeholder.warning("Market scan complete - No trades triggered.")
+else:
+    status_placeholder.error("⏸️ BOT PAUSED: Awaiting Start Command or Daily Goal Reset.")
+
+time.sleep(30)
+st.rerun()
+
 # 6. DASHBOARD TABS
 tab1, tab2, tab3 = st.tabs(["🏛️ Live Terminal", "🔭 Strategy Forecaster", "📜 Full Ledger"])
 
