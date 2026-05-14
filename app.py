@@ -59,16 +59,22 @@ with col2:
 def run_trade_cycle():
     tickers = ["BTC/USD", "ETH/USD", "SOL/USD", "NVDA", "TSLA"]
     t = random.choice(tickers)
-    
     status_placeholder.write(f"🔍 Analyzing {t}...")
     
     try:
-        # Standardize ticker for YFinance
         yf_ticker = t.replace("/", "-")
         df = yf.download(yf_ticker, period="1d", interval="1m", progress=False)
         
         if not df.empty:
-            price = float(df['Close'].iloc[-1])
+            # Target the specific ticker column if it's nested
+            if isinstance(df.columns, pd.MultiIndex):
+                val = df['Close'][yf_ticker].iloc[-1]
+            else:
+                val = df['Close'].iloc[-1]
+                
+            price = float(val)
+            
+            # Aggressive 10% sizing
             qty = (st.session_state.balance * 0.10) / price
             
             # Formatting for Alpaca
@@ -89,6 +95,8 @@ def run_trade_cycle():
                 })
                 return True
     except Exception as e:
+        # This will now catch other errors (like insufficient funds) 
+        # instead of the float/Series error.
         st.sidebar.error(f"Trade Error: {e}")
     return False
 
