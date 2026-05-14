@@ -92,16 +92,13 @@ def get_forecaster_data(watchlist):
             sentiment_score = random.randint(65, 95)
             
             if diff < -0.02:
-                bias = "🔥 STRONGLY BULLISH"
-                signal = "BUY"
+                bias = "🔥 STRONGLY BULLISH"; signal = "BUY"
                 proj_price = current_price * 1.06
             elif diff > 0.02:
-                bias = "🧊 STRONGLY BEARISH"
-                signal = "SELL"
+                bias = "🧊 STRONGLY BEARISH"; signal = "SELL"
                 proj_price = current_price * 0.95
             else:
-                bias = "⚖️ NEUTRAL"
-                signal = "HOLD"
+                bias = "⚖️ NEUTRAL"; signal = "HOLD"
                 proj_price = current_price
                 
             forecasts.append({
@@ -152,14 +149,10 @@ def run_trade_cycle():
     return False
 
 # ====================== SESSION STATE ======================
-if 'trades' not in st.session_state: 
-    st.session_state.trades = []
-if 'bot_active' not in st.session_state: 
-    st.session_state.bot_active = True
-if 'daily_pnl' not in st.session_state: 
-    st.session_state.daily_pnl = 0.0
-if 'goal_reached_notified' not in st.session_state: 
-    st.session_state.goal_reached_notified = False
+if 'trades' not in st.session_state: st.session_state.trades = []
+if 'bot_active' not in st.session_state: st.session_state.bot_active = True
+if 'daily_pnl' not in st.session_state: st.session_state.daily_pnl = 0.0
+if 'goal_reached_notified' not in st.session_state: st.session_state.goal_reached_notified = False
 
 # ====================== DASHBOARD ======================
 tab1, tab2, tab3 = st.tabs(["🏛️ Live Terminal", "🔭 Strategy Forecaster", "📜 Full Ledger"])
@@ -185,6 +178,40 @@ with tab1:
             send_goal_alert(st.session_state.daily_pnl)
             st.session_state.goal_reached_notified = True
             st.session_state.bot_active = False
+    except:
+        pass
+
+    # Live Positions with $ PnL
+    st.subheader("📊 Live Positions")
+    try:
+        positions = trade_client.get_all_positions()
+        if positions:
+            pos_data = []
+            for p in positions:
+                unrealized_pnl = float(p.unrealized_pl)
+                pos_data.append({
+                    "Symbol": p.symbol,
+                    "Qty": p.qty,
+                    "Avg Entry": f"${float(p.avg_entry_price):,.2f}",
+                    "Current Price": f"${float(p.current_price):,.2f}",
+                    "Unrealized PnL $": f"${unrealized_pnl:,.2f}",
+                    "PnL %": f"{float(p.unrealized_plpc)*100:.2f}%"
+                })
+            st.dataframe(pd.DataFrame(pos_data), use_container_width=True, hide_index=True)
+        else:
+            st.info("No open positions.")
+    except Exception as e:
+        st.error(f"Positions Error: {e}")
+
+    # Active Orders
+    st.subheader("⏳ Active Orders")
+    try:
+        orders = trade_client.get_orders()
+        if orders:
+            order_data = [{"Symbol": o.symbol, "Qty": o.qty, "Side": o.side.upper(), "Status": o.status.upper(), "Submitted": o.submitted_at.strftime("%H:%M:%S")} for o in orders]
+            st.dataframe(pd.DataFrame(order_data), use_container_width=True, hide_index=True)
+        else:
+            st.info("No pending orders.")
     except:
         pass
 
