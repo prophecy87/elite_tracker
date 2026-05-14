@@ -10,64 +10,50 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 
-st.set_page_config(page_title="EliteTracker Ledger", layout="wide")
-st.title("🔥 EliteTracker • Full Ledger Bot")
-st.caption("Automatic Trading + Complete Trade History")
+st.set_page_config(page_title="EliteTracker • 100 to 1M", layout="wide")
+st.title("🔥 EliteTracker • Live Alpaca Balance")
+st.caption("Balance synced from Alpaca • Automatic Trading")
 
-# ====================== ALPACA ======================
+# ====================== ALPACA CONNECTION ======================
 try:
     API_KEY = st.secrets["alpaca"]["api_key"]
     SECRET_KEY = st.secrets["alpaca"]["secret_key"]
     trade_client = TradingClient(API_KEY, SECRET_KEY, paper=True)
-    st.sidebar.success("✅ Alpaca Paper Connected")
+    st.sidebar.success("✅ Connected to Alpaca Paper")
 except:
-    st.error("Keys not found")
+    st.error("❌ Could not connect to Alpaca. Check your secrets.")
     st.stop()
 
-# ====================== PERSISTENT LEDGER ======================
-DATA_FILE = "trade_ledger.json"
-
-def load_ledger():
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE) as f:
-                return json.load(f)
-        except:
-            pass
-    return {"balance": 100.0, "trades": []}
-
-def save_ledger(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-
-data = load_ledger()
-if 'balance' not in st.session_state:
-    st.session_state.balance = data.get("balance", 100.0)
-if 'trades' not in st.session_state:
-    st.session_state.trades = data.get("trades", [])
-
-# ====================== BALANCE ======================
-st.subheader(f"💰 Current Balance: ${st.session_state.balance:,.2f}")
-
-if st.button("🔄 Refresh Balance"):
+# ====================== REAL ALPACA BALANCE (Always Synced) ======================
+def get_alpaca_balance():
     try:
-        acc = trade_client.get_account()
-        st.session_state.balance = float(acc.cash)
-        st.success("Balance synced from Alpaca")
-    except:
-        st.error("Could not sync balance")
+        account = trade_client.get_account()
+        return float(account.cash)
+    except Exception as e:
+        st.error(f"Balance sync failed: {e}")
+        return st.session_state.get("balance", 100.0)
 
-# ====================== AUTO TRADING + LEDGER ======================
+# Force sync on every load
+st.session_state.balance = get_alpaca_balance()
+
+st.subheader(f"💰 **Real Alpaca Balance**: ${st.session_state.balance:,.2f}")
+if st.button("🔄 Force Refresh Balance"):
+    st.session_state.balance = get_alpaca_balance()
+    st.success("Balance updated from Alpaca")
+    st.rerun()
+
+st.progress(min(st.session_state.balance / 1000000.0, 1.0))
+
+# ====================== AUTO TRADING ======================
 def auto_trade():
-    if random.random() < 0.65:
+    if random.random() < 0.62:
         tickers = ["NVDA", "TSLA", "BTC-USD", "ETH-USD", "SOL-USD"]
         ticker = random.choice(tickers)
         
         try:
             price = float(yf.download(ticker, period="5d", progress=False)['Close'].iloc[-1])
-            qty = max(1, int(st.session_state.balance * 0.12 / price))  # 12% risk
-
-            # Submit real paper order
+            qty = max(1, int(st.session_state.balance * 0.12 / price))  # 12% max risk
+            
             order = MarketOrderRequest(
                 symbol=ticker.replace("-USD", ""),
                 qty=qty,
@@ -75,36 +61,21 @@ def auto_trade():
                 time_in_force=TimeInForce.DAY
             )
             trade_client.submit_order(order)
-
-            # Record in ledger
-            trade = {
-                "entry_time": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                "ticker": ticker,
-                "entry_price": round(price, 4),
-                "qty": qty,
-                "status": "OPEN",
-                "exit_time": None,
-                "exit_price": None,
-                "pnl": None
-            }
-            st.session_state.trades.append(trade)
-            
             st.success(f"✅ Auto Bought {qty} {ticker} @ ${price:,.2f}")
-            
         except:
             pass
 
 auto_trade()
 
-# ====================== LEDGER DISPLAY ======================
-st.write("### 📋 Full Trade Ledger")
-if st.session_state.trades:
-    df = pd.DataFrame(st.session_state.trades)
-    st.dataframe(df, width='stretch', hide_index=True)
-else:
-    st.info("No trades yet. The bot will start executing soon.")
+# ====================== TRADE LEDGER ======================
+if 'history' not in st.session_state:
+    st.session_state.history = []
 
-st.caption("❤️ Every trade is logged with entry/exit prices and PnL (when closed).")
+if st.session_state.history:
+    st.write("### 📋 Trade Ledger")
+    st.dataframe(pd.DataFrame(st.session_state.history)[::-1], width='stretch', hide_index=True)
 
-time.sleep(22)
+st.caption("❤️ Balance is now always pulled from your real Alpaca account.")
+
+time.sleep(20)
 st.rerun()
