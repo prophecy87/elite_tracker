@@ -2,3 +2,4 @@ streamlit
 pandas
 yfinance
 alpaca-py
+pandas_ta
