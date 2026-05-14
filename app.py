@@ -3,15 +3,13 @@ import yfinance as yf
 import streamlit as st
 from datetime import datetime
 import time
-from email.message import EmailMessage
-import smtplib
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest, TakeProfitRequest, StopLossRequest
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
 
 # ====================== PAGE SETUP ======================
-st.set_page_config(page_title="EliteForge v24.1", layout="wide")
-st.title("🔥 EliteForge • 100 to 1M")
+st.set_page_config(page_title="EliteForge v24.2", layout="wide")
+st.title("🔥 EliteForge • Hybrid Engine")
 status_placeholder = st.empty()
 
 # ====================== ALPACA CONNECT ======================
@@ -28,65 +26,70 @@ def connect_alpaca():
         return None
 
 trade_client = connect_alpaca()
-if not trade_client:
-    st.stop()
 
-# ====================== RISK & STRATEGY ======================
-# Adjusted risk to prevent "Gambler's Ruin"
-strategy = st.sidebar.selectbox("🎛️ Strategy Mode", ["Safe", "Neutral", "Aggressive", "Pause"], index=0)
+# ====================== HYBRID SETTINGS ======================
+strategy = st.sidebar.selectbox("🎛️ Strategy Mode", ["Safe", "Neutral", "Aggressive", "Pause"], index=1)
 
 configs = {
-    "Safe": {"risk": 0.02, "tp": 0.03, "sl": 0.015, "color": "blue"},
-    "Neutral": {"risk": 0.05, "tp": 0.06, "sl": 0.03, "color": "green"},
-    "Aggressive": {"risk": 0.10, "tp": 0.12, "sl": 0.05, "color": "orange"},
-    "Pause": {"risk": 0.0, "tp": 0.0, "sl": 0.0, "color": "red"}
+    "Safe": {"risk": 0.02, "tp": 0.02, "sl": 0.01},
+    "Neutral": {"risk": 0.04, "tp": 0.05, "sl": 0.02},
+    "Aggressive": {"risk": 0.08, "tp": 0.10, "sl": 0.04},
+    "Pause": {"risk": 0.0, "tp": 0.0, "sl": 0.0}
 }
-
 conf = configs[strategy]
-risk_per_trade = conf["risk"]
 
-# ====================== ANALYSIS ENGINE ======================
+# ====================== MARKET LOGIC ======================
+def is_market_open(ticker):
+    """Checks if the asset can currently be traded."""
+    if "/" in ticker:  # Crypto is always open
+        return True
+    
+    # Stock Market Check (Alpaca API check)
+    try:
+        clock = trade_client.get_clock()
+        return clock.is_open
+    except:
+        return False
+
 def analyze_ticker(ticker):
-    """Calculates technical signals and returns action."""
     try:
         yf_ticker = ticker.replace("/", "-")
+        # Fetching enough data for a 20-period MA
         df = yf.download(yf_ticker, period="5d", interval="60m", progress=False)
-        if df.empty: return None
+        if df.empty or len(df) < 20: return None
         
         current_price = float(df['Close'].iloc[-1])
         ma20 = float(df['Close'].rolling(20).mean().iloc[-1])
-        # Simple Mean Reversion Logic
         diff = (current_price - ma20) / ma20
         
-        if diff < -0.02: # Price is 2% below average
-            return {"action": "BUY", "price": current_price, "bias": "BULLISH"}
-        elif diff > 0.02: # Price is 2% above average
-            return {"action": "SELL", "price": current_price, "bias": "BEARISH"}
-        return {"action": "HOLD", "price": current_price, "bias": "NEUTRAL"}
+        # Logic: If price is >2% below average, it's a "Buy the Dip" signal
+        if diff < -0.02:
+            return {"action": "BUY", "price": current_price, "bias": "OVERSOLD"}
+        return {"action": "HOLD", "price": current_price, "bias": "STABLE"}
     except:
         return None
 
-# ====================== EXECUTION ENGINE ======================
+# ====================== EXECUTION ======================
 def execute_trade(ticker, analysis):
-    if analysis['action'] != "BUY":
+    if not is_market_open(ticker):
+        st.sidebar.warning(f"Market Closed for {ticker}. Skipping...")
         return False
 
     try:
         acc = trade_client.get_account()
-        buying_power = float(acc.buying_power)
+        # Use 'cash' for calculation to avoid over-leveraging
+        available_cap = float(acc.cash)
         
-        # Calculate quantity based on risk %
-        qty = (buying_power * risk_per_trade) / analysis['price']
+        pos_size_dollars = available_cap * conf['risk']
+        qty = pos_size_dollars / analysis['price']
+        
+        # Formatting for Alpaca: Crypto handles 4 decimals, Stocks handle 0 (usually)
         symbol = ticker.replace("/", "")
-        
-        # Format quantity (Crypto allows decimals, Stocks usually don't)
         qty = round(qty, 4) if "/" in ticker else int(qty)
         
         if qty <= 0: return False
 
-        # BRACKET ORDER: Entry + Automated Stop Loss & Take Profit
-        # This protects you even if the Streamlit app crashes!
-        bracket_order = MarketOrderRequest(
+        order_data = MarketOrderRequest(
             symbol=symbol,
             qty=qty,
             side=OrderSide.BUY,
@@ -96,47 +99,40 @@ def execute_trade(ticker, analysis):
             stop_loss=StopLossRequest(stop_price=round(analysis['price'] * (1 - conf['sl']), 2))
         )
         
-        trade_client.submit_order(bracket_order)
+        trade_client.submit_order(order_data)
         return True
     except Exception as e:
-        st.sidebar.error(f"Execution Error: {e}")
+        st.sidebar.error(f"Order failed for {ticker}: {e}")
         return False
 
 # ====================== DASHBOARD UI ======================
-tab1, tab2 = st.tabs(["🏛️ Live Terminal", "📜 Trade Ledger"])
+tab1, tab2 = st.tabs(["🏛️ Terminal", "📜 History"])
 
 with tab1:
     col1, col2 = st.columns(2)
     try:
         acc = trade_client.get_account()
-        col1.metric("Account Equity", f"${float(acc.equity):,.2f}")
-        col2.metric("Buying Power", f"${float(acc.buying_power):,.2f}")
+        col1.metric("Paper Balance", f"${float(acc.equity):,.2f}")
+        col2.metric("Strategy", strategy)
     except:
-        pass
+        st.error("Could not fetch account data. Check API keys.")
 
-    st.subheader("📡 Market Scanning")
-    watchlist = ["BTC/USD", "ETH/USD", "NVDA", "TSLA", "SOL/USD"]
+    watchlist = ["BTC/USD", "ETH/USD", "SOL/USD", "NVDA", "TSLA", "AMD"]
     
     if strategy != "Pause":
+        st.write("### 📡 Real-Time Analysis")
         for t in watchlist:
             analysis = analyze_ticker(t)
             if analysis:
-                st.write(f"**{t}**: {analysis['bias']} | Signal: {analysis['action']}")
+                status_color = "green" if analysis['action'] == "BUY" else "white"
+                st.markdown(f"**{t}**: {analysis['bias']} | Price: ${analysis['price']:,.2f}")
+                
                 if analysis['action'] == "BUY":
                     if execute_trade(t, analysis):
-                        st.balloons()
-                        st.success(f"Deployed Bracket Order for {t}")
-                        if 'ledger' not in st.session_state: st.session_state.ledger = []
-                        st.session_state.ledger.append({"Time": datetime.now(), "Asset": t, "Type": "BUY"})
+                        st.success(f"🚀 Trade placed for {t}")
     else:
-        st.warning("Bot is currently paused.")
+        st.info("Bot is paused. No active scanning.")
 
-with tab2:
-    if 'ledger' in st.session_state:
-        st.table(st.session_state.ledger)
-    else:
-        st.info("No trades executed this session.")
-
-# ====================== AUTO-REFRESH ======================
-time.sleep(60) # Slowed down to 60s to avoid API rate limits
+# Refresh every minute
+time.sleep(60)
 st.rerun()
