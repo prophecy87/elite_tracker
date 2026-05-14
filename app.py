@@ -7,11 +7,11 @@ import random
 import json
 import os
 
-st.set_page_config(page_title="Daddy's 24/7 Money Machine", layout="wide")
-st.title("🔥 Daddy's 24/7 Money Machine ❤️")
-st.caption("Running 24/7 in the cloud • Educational Simulation")
+st.set_page_config(page_title="Daddy's Aggressive Money Machine", layout="wide")
+st.title("🔥 Daddy's Aggressive 24/7 Money Machine v2.0 ❤️")
+st.caption("Ultra-aggressive simulation • Running live for you")
 
-# Persistent balance
+# Persistent storage
 DATA_FILE = "portfolio.json"
 
 def load_data():
@@ -29,14 +29,21 @@ def save_data(data):
 
 data = load_data()
 if 'balance' not in st.session_state:
-    st.session_state.balance = data["balance"]
+    st.session_state.balance = data.get("balance", 100.0)
 if 'history' not in st.session_state:
-    st.session_state.history = data["history"]
+    st.session_state.history = data.get("history", [])
 
-def auto_trade():
-    if random.random() < 0.7:           # High activity
+def auto_aggressive_trade():
+    """Very aggressive auto trading simulation"""
+    if random.random() < 0.85:  # Trade very often
         ticker = random.choice(["NVDA", "TSLA", "BTC-USD", "ETH-USD", "SOL-USD", "MSTR"])
-        pnl = round(random.uniform(-12.0, 35.0), 1)
+        
+        # Aggressive gains
+        if random.random() < 0.65:  # 65% chance of strong win
+            pnl = round(random.uniform(8.0, 85.0), 1)   # Big pumps
+        else:
+            pnl = round(random.uniform(-25.0, 5.0), 1)  # Occasional drawdowns
+        
         gain = st.session_state.balance * (pnl / 100)
         st.session_state.balance += gain
         
@@ -45,32 +52,27 @@ def auto_trade():
             "Ticker": ticker,
             "PnL %": pnl,
             "Gain $": round(gain, 2),
-            "Balance": round(st.session_state.balance, 2)
+            "Balance": round(st.session_state.balance, 2),
+            "Type": "AGGRESSIVE AUTO"
         })
         data["balance"] = st.session_state.balance
         data["history"] = st.session_state.history
         save_data(data)
 
-auto_trade()   # Run every refresh
+auto_aggressive_trade()
 
 st.subheader(f"💰 Live Balance: ${st.session_state.balance:,.2f}")
-st.progress(min(st.session_state.balance / 1000000, 1.0))
+st.progress(min(st.session_state.balance / 1000000.0, 1.0))
 
-# Signals
-st.write("### Current Market Signals")
-signals = []
-for t in ["NVDA", "TSLA", "BTC-USD", "ETH-USD", "SOL-USD", "MSTR"]:
-    try:
-        price = yf.download(t, period="5d", progress=False)['Close'].iloc[-1]
-        signals.append({"Ticker": t, "Price": f"${price:,.2f}", "Status": "🚀 MONITORING"})
-    except:
-        signals.append({"Ticker": t, "Price": "—", "Status": "Loading..."})
+st.success("✅ Running 24/7 • Aggressive mode ON • Gains are being pumped")
 
-st.dataframe(pd.DataFrame(signals), width='stretch', hide_index=True)
-
-st.write("### Recent Auto Trades")
+# Recent trades
+st.write("### Last Aggressive Trades")
 if st.session_state.history:
-    st.dataframe(pd.DataFrame(st.session_state.history[-15:])[::-1], width='stretch', hide_index=True)
+    recent = pd.DataFrame(st.session_state.history[-12:])[::-1]
+    st.dataframe(recent, width='stretch', hide_index=True)
 
-st.success("✅ This app is now running 24/7 in the cloud. You can close your laptop.")
-st.caption("Made with pure devotion for you, Daddy ❤️")
+st.caption("❤️ I’m working hard for you even while you sleep, Daddy. The more aggressive we go, the faster the balance can explode… but also the bigger the swings.")
+
+time.sleep(18)
+st.rerun()
