@@ -35,7 +35,7 @@ if not trade_client:
     st.error("Missing Alpaca Secrets.")
     st.stop()
 
-# ====================== EMAIL ALERT ======================
+# ====================== EMAIL ======================
 def send_goal_alert(current_pnl):
     try:
         msg = EmailMessage()
@@ -65,21 +65,17 @@ strategy = st.selectbox(
 if strategy == "Aggressive":
     trade_freq = 0.78
     risk_per_trade = 0.22
-    allow_short = True
-    st.success("🚀 AGGRESSIVE MODE (Long + Short)")
+    st.success("🚀 AGGRESSIVE MODE")
 elif strategy == "Neutral":
     trade_freq = 0.45
     risk_per_trade = 0.12
-    allow_short = True
-    st.info("⚖️ NEUTRAL MODE (Long + Short)")
+    st.info("⚖️ NEUTRAL MODE")
 elif strategy == "Safe":
     trade_freq = 0.25
     risk_per_trade = 0.07
-    allow_short = False
-    st.warning("🛡️ SAFE MODE (Long Only)")
+    st.warning("🛡️ SAFE MODE")
 else:
     trade_freq = 0.0
-    allow_short = False
     st.error("⏸️ BOT PAUSED")
 
 # ====================== FORECASTER ======================
@@ -96,16 +92,13 @@ def get_forecaster_data(watchlist):
             sentiment_score = random.randint(65, 95)
             
             if diff < -0.02:
-                bias = "🔥 STRONGLY BULLISH"
-                signal = "BUY"
+                bias = "🔥 STRONGLY BULLISH"; signal = "BUY"
                 proj_price = current_price * 1.06
-            elif diff > 0.02 and allow_short:
-                bias = "🧊 STRONGLY BEARISH"
-                signal = "SHORT"
-                proj_price = current_price * 0.94
+            elif diff > 0.02:
+                bias = "🧊 STRONGLY BEARISH"; signal = "SELL"
+                proj_price = current_price * 0.95
             else:
-                bias = "⚖️ NEUTRAL"
-                signal = "HOLD"
+                bias = "⚖️ NEUTRAL"; signal = "HOLD"
                 proj_price = current_price
                 
             forecasts.append({
@@ -139,13 +132,8 @@ def run_trade_cycle():
             qty = int(qty) if "/" not in t else round(qty, 4)
             
             if qty > 0:
-                side = OrderSide.BUY
-                if random.random() < 0.35 and allow_short:  # Chance to short in bearish setups
-                    side = OrderSide.SELL
-                
-                order = MarketOrderRequest(symbol=symbol, qty=qty, side=side, time_in_force=TimeInForce.GTC)
+                order = MarketOrderRequest(symbol=symbol, qty=qty, side=OrderSide.BUY, time_in_force=TimeInForce.GTC)
                 trade_client.submit_order(order)
-                
                 if 'trades' not in st.session_state:
                     st.session_state.trades = []
                 st.session_state.trades.append({
@@ -153,8 +141,7 @@ def run_trade_cycle():
                     "Asset": symbol,
                     "Price": f"${price:,.2f}",
                     "Size": qty,
-                    "Strategy": strategy,
-                    "Side": "SHORT" if side == OrderSide.SELL else "LONG"
+                    "Strategy": strategy
                 })
                 return True
     except Exception as e:
@@ -191,6 +178,31 @@ with tab1:
             send_goal_alert(st.session_state.daily_pnl)
             st.session_state.goal_reached_notified = True
             st.session_state.bot_active = False
+    except:
+        pass
+
+    # Live Positions
+    st.subheader("📊 Live Positions")
+    try:
+        positions = trade_client.get_all_positions()
+        if positions:
+            pos_data = [{"Symbol": p.symbol, "Qty": p.qty, "Avg Entry": f"${float(p.avg_entry_price):,.2f}", 
+                         "Current Price": f"${float(p.current_price):,.2f}", "Unrealized PnL": f"${float(p.unrealized_pl):,.2f}"} for p in positions]
+            st.dataframe(pd.DataFrame(pos_data), use_container_width=True, hide_index=True)
+        else:
+            st.info("No open positions.")
+    except:
+        pass
+
+    # Active Orders
+    st.subheader("⏳ Active Orders")
+    try:
+        orders = trade_client.get_orders()
+        if orders:
+            order_data = [{"Symbol": o.symbol, "Qty": o.qty, "Side": o.side.upper(), "Status": o.status.upper(), "Submitted": o.submitted_at.strftime("%H:%M:%S")} for o in orders]
+            st.dataframe(pd.DataFrame(order_data), use_container_width=True, hide_index=True)
+        else:
+            st.info("No pending orders.")
     except:
         pass
 
