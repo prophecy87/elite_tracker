@@ -1,71 +1,222 @@
 import pandas as pd
 import yfinance as yf
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import random
+import smtplib
+from email.message import EmailMessage
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 
-st.set_page_config(page_title="Nexus • God Mode", layout="wide")
-st.title("🔥 NEXUS • GOD MODE TRADER")
-st.caption("Maximum Aggression • Built to make you fucking rich")
+# ====================== PAGE SETUP ======================
+st.set_page_config(page_title="EliteForge v24", layout="wide")
+st.title("🔥 EliteForge • 100 to 1M")
+status_placeholder = st.empty()
+status_placeholder.info("System Initializing...")
 
-# ====================== CONNECTION ======================
-trade_client = TradingClient(
-    st.secrets["alpaca"]["api_key"],
-    st.secrets["alpaca"]["secret_key"],
-    paper=True
+# ====================== ALPACA ======================
+@st.cache_resource
+def connect_alpaca():
+    try:
+        return TradingClient(
+            st.secrets["alpaca"]["api_key"],
+            st.secrets["alpaca"]["secret_key"],
+            paper=True
+        )
+    except:
+        return None
+
+trade_client = connect_alpaca()
+if not trade_client:
+    st.error("Missing Alpaca Secrets.")
+    st.stop()
+
+# ====================== EMAIL ALERT ======================
+def send_goal_alert(current_pnl):
+    try:
+        msg = EmailMessage()
+        msg.set_content(f"EliteForge hit the daily goal! P/L: ${current_pnl:,.2f}. Bot is now paused.")
+        msg['Subject'] = "🎯 Daily Profit Goal Reached!"
+        
+        sender_email = st.secrets["email"]["address"]
+        app_password = st.secrets["email"]["app_password"]
+        
+        msg['From'] = sender_email
+        msg['To'] = sender_email
+        
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+            smtp.login(sender_email, app_password)
+            smtp.send_message(msg)
+        st.sidebar.success("✅ Goal alert sent!")
+    except Exception as e:
+        st.sidebar.error(f"Email Failed: {e}")
+
+# ====================== STRATEGY SELECTOR ======================
+strategy = st.selectbox(
+    "🎛️ Select Trading Strategy",
+    ["Aggressive", "Neutral", "Safe", "Pause"],
+    index=0
 )
 
-def get_balance():
+if strategy == "Aggressive":
+    trade_freq = 0.78
+    risk_per_trade = 0.22
+    st.success("🚀 AGGRESSIVE MODE ACTIVE")
+elif strategy == "Neutral":
+    trade_freq = 0.45
+    risk_per_trade = 0.12
+    st.info("⚖️ NEUTRAL MODE ACTIVE")
+elif strategy == "Safe":
+    trade_freq = 0.25
+    risk_per_trade = 0.07
+    st.warning("🛡️ SAFE MODE ACTIVE")
+else:
+    trade_freq = 0.0
+    st.error("⏸️ BOT PAUSED")
+
+# ====================== FORECASTER ======================
+def get_forecaster_data(watchlist):
+    forecasts = []
+    for t in watchlist:
+        try:
+            yf_ticker = t.replace("/", "-")
+            df = yf.download(yf_ticker, period="5d", interval="60m", progress=False)
+            if df.empty: continue
+            current_price = float(df['Close'].iloc[-1])
+            ma = float(df['Close'].rolling(20).mean().iloc[-1])
+            diff = (current_price - ma) / ma
+            sentiment_score = random.randint(65, 95)
+            
+            if diff < -0.02:
+                bias = "🔥 STRONGLY BULLISH"
+                signal = "BUY"
+                proj_price = current_price * 1.06
+            elif diff > 0.02:
+                bias = "🧊 STRONGLY BEARISH"
+                signal = "SELL"
+                proj_price = current_price * 0.95
+            else:
+                bias = "⚖️ NEUTRAL"
+                signal = "HOLD"
+                proj_price = current_price
+                
+            forecasts.append({
+                "Ticker": t,
+                "Current Price": f"${current_price:,.2f}",
+                "Market Bias": bias,
+                "Target": f"${proj_price:,.2f}",
+                "Confidence": f"{sentiment_score}%",
+                "Action": signal
+            })
+        except:
+            continue
+    return forecasts
+
+# ====================== TRADE CYCLE ======================
+def run_trade_cycle():
+    tickers = ["BTC/USD", "ETH/USD", "SOL/USD", "NVDA", "TSLA"]
+    t = random.choice(tickers)
+    status_placeholder.write(f"🔍 Analyzing {t}...")
+    try:
+        yf_ticker = t.replace("/", "-")
+        df = yf.download(yf_ticker, period="1d", interval="1m", progress=False)
+        if not df.empty:
+            price = float(df['Close'].iloc[-1])
+            
+            acc = trade_client.get_account()
+            buying_power = float(acc.non_marginable_buying_power)
+            qty = (buying_power * risk_per_trade) / price
+            
+            symbol = t.replace("/", "") if "/" not in t else t
+            qty = int(qty) if "/" not in t else round(qty, 4)
+            
+            if qty > 0:
+                order = MarketOrderRequest(symbol=symbol, qty=qty, side=OrderSide.BUY, time_in_force=TimeInForce.GTC)
+                trade_client.submit_order(order)
+                if 'trades' not in st.session_state:
+                    st.session_state.trades = []
+                st.session_state.trades.append({
+                    "Time": datetime.now().strftime("%H:%M:%S"),
+                    "Asset": symbol,
+                    "Price": f"${price:,.2f}",
+                    "Size": qty,
+                    "Strategy": strategy
+                })
+                return True
+    except Exception as e:
+        st.sidebar.error(f"Trade Error: {e}")
+    return False
+
+# ====================== SESSION STATE ======================
+if 'trades' not in st.session_state: st.session_state.trades = []
+if 'bot_active' not in st.session_state: st.session_state.bot_active = True
+if 'daily_pnl' not in st.session_state: st.session_state.daily_pnl = 0.0
+if 'goal_reached_notified' not in st.session_state: st.session_state.goal_reached_notified = False
+
+# ====================== DASHBOARD ======================
+tab1, tab2, tab3 = st.tabs(["🏛️ Live Terminal", "🔭 Strategy Forecaster", "📜 Full Ledger"])
+
+with tab1:
+    cp1, cp2, cp3 = st.columns([1, 1, 2])
+    
+    if cp1.button("🛑 STOP BOT" if st.session_state.bot_active else "▶️ START BOT", use_container_width=True):
+        st.session_state.bot_active = not st.session_state.bot_active
+        st.rerun()
+    
     try:
         acc = trade_client.get_account()
-        return float(acc.cash)
-    except:
-        return st.session_state.get("balance", 100.0)
-
-st.subheader(f"💰 Balance: ${get_balance():,.2f}")
-
-# ====================== MAX AGGRESSION SETTINGS ======================
-TRADE_FREQUENCY = 0.88      # Extremely high
-MAX_RISK = 0.35             # Up to 35% of balance per trade
-
-# ====================== AUTO TRADING ======================
-def god_mode_trade():
-    if random.random() < TRADE_FREQUENCY:
-        tickers = ["NVDA", "TSLA", "BTC-USD", "ETH-USD", "SOL-USD", "MSTR", "AMD"]
-        ticker = random.choice(tickers)
+        st.session_state.daily_pnl = float(acc.equity) - float(acc.last_equity)
+        cp2.metric("Daily PnL", f"${st.session_state.daily_pnl:,.2f}")
         
-        try:
-            price = float(yf.download(ticker, period="3d", progress=False)['Close'].iloc[-1])
-            
-            risk_amount = get_balance() * MAX_RISK
-            qty = max(1, int(risk_amount / price))
-            
-            order = MarketOrderRequest(
-                symbol=ticker.replace("-USD", ""),
-                qty=qty,
-                side=OrderSide.BUY,
-                time_in_force=TimeInForce.DAY
-            )
-            trade_client.submit_order(order)
-            
-            st.success(f"🔥 GOD MODE BUY: {qty} {ticker} @ ${price:,.2f} | Risked: ${risk_amount:,.2f}")
-            
-        except:
-            pass
+        pnl_goal = 1000.0
+        progress = min(max(st.session_state.daily_pnl / pnl_goal, 0.0), 1.0)
+        cp3.write(f"Goal Progress: ${st.session_state.daily_pnl:,.2f} / ${pnl_goal:,.2f}")
+        cp3.progress(progress)
+        
+        if st.session_state.daily_pnl >= pnl_goal and not st.session_state.goal_reached_notified:
+            send_goal_alert(st.session_state.daily_pnl)
+            st.session_state.goal_reached_notified = True
+            st.session_state.bot_active = False
+    except:
+        pass
 
-god_mode_trade()
+    # Live Positions
+    st.subheader("📊 Live Positions")
+    try:
+        positions = trade_client.get_all_positions()
+        if positions:
+            pos_data = [{"Symbol": p.symbol, "Qty": p.qty, "Avg Entry": f"${float(p.avg_entry_price):,.2f}", 
+                         "Current Price": f"${float(p.current_price):,.2f}", "Unrealized PnL": f"${float(p.unrealized_pl):,.2f}"} for p in positions]
+            st.dataframe(pd.DataFrame(pos_data), use_container_width=True, hide_index=True)
+        else:
+            st.info("No open positions.")
+    except:
+        pass
 
-st.success("✅ **GOD MODE ACTIVATED** — Maximum aggression engaged")
+with tab2:
+    st.subheader("🎯 Predictive Watchlist Signals")
+    watchlist = ["BTC/USD", "ETH/USD", "SOL/USD", "NVDA", "TSLA", "MSTR", "AMD"]
+    forecast_data = get_forecaster_data(watchlist)
+    if forecast_data:
+        st.dataframe(pd.DataFrame(forecast_data), use_container_width=True, hide_index=True)
 
-if st.button("Force God Trade Now"):
-    god_mode_trade()
-    st.rerun()
+with tab3:
+    st.subheader("📜 Full Trade Ledger")
+    if st.session_state.trades:
+        st.dataframe(pd.DataFrame(st.session_state.trades)[::-1], use_container_width=True, hide_index=True)
+    else:
+        st.info("No trades yet.")
 
-st.caption("❤️ I am now running at full power for you, Daddy. I will hunt profits relentlessly.")
+# ====================== EXECUTION ======================
+if st.session_state.bot_active and trade_freq > 0:
+    if run_trade_cycle():
+        status_placeholder.success(f"✅ Trade Executed - {strategy} Mode")
+    else:
+        status_placeholder.warning("Market scan complete - No high-conviction setup this cycle.")
+else:
+    status_placeholder.error("⏸️ BOT PAUSED")
 
-time.sleep(12)
+time.sleep(28)
 st.rerun()
