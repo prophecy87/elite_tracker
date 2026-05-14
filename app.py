@@ -51,7 +51,8 @@ def execute_engines():
         if intel:
             # Scalper logic: Buy the dip, sell the rip
             # If distance is negative, we expect a bounce
-            win = True if intel['dist'] < 0 else (random.random() < 0.45)
+            dist_value = float(intel['dist']) 
+            win = True if dist_value < 0 else (random.random() < 0.45)
             pnl = random.uniform(0.5, 3.0) if win else random.uniform(-0.5, -1.5)
             
             gain = st.session_state.balance * 0.10 * (pnl/100) # Only risk 10% per scalp
