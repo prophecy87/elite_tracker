@@ -123,4 +123,18 @@ def run_trade_cycle():
     status_placeholder.write(f"🔍 Analyzing {t}...")
     try:
         yf_ticker = t.replace("/", "-")
-        df = yf.download(yf_ticker, period="1d", interval="1m", progress=False
+        df = yf.download(yf_ticker, period="1d", interval="1m", progress=False)
+        if not df.empty:
+            price = float(df['Close'].iloc[-1])
+            
+            acc = trade_client.get_account()
+            buying_power = float(acc.non_marginable_buying_power)
+            qty = (buying_power * risk_per_trade) / price
+            
+            symbol = t.replace("/", "") if "/" not in t else t
+            qty = int(qty) if "/" not in t else round(qty, 4)
+            
+            if qty > 0:
+                order = MarketOrderRequest(symbol=symbol, qty=qty, side=OrderSide.BUY, time_in_force=TimeInForce.GTC)
+                trade_client.submit_order(order)
+                if
