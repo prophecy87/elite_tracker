@@ -10,6 +10,11 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 
+# Keep-alive for UptimeRobot / external pings
+if "keep_alive" in st.query_params:
+    st.write("✅ Keep-alive ping received")
+    st.stop()
+
 st.set_page_config(page_title="Daddy's Best 100 to 1M Bot", layout="wide")
 st.title("🔥 Daddy's Best 24/7 Auto Trader ❤️")
 st.caption("Syncs with Real Alpaca Balance • Fully Automatic")
