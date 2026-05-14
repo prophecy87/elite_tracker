@@ -98,7 +98,6 @@ if 'bot_active' not in st.session_state: st.session_state.bot_active = True
 if 'daily_pnl' not in st.session_state: st.session_state.daily_pnl = 0.0
 if 'goal_reached_notified' not in st.session_state: st.session_state.goal_reached_notified = False
 
-# 2. EMAIL NOTIFICATION FUNCTION
 # 2. EMAIL NOTIFICATION FUNCTION (Updated for Secrets)
 def send_goal_alert(current_pnl):
     msg = EmailMessage()
@@ -118,7 +117,6 @@ def send_goal_alert(current_pnl):
             smtp.send_message(msg)
     except Exception as e:
         st.sidebar.error(f"Email Failed: {e}")
-
 # 3. CONTROL PANEL (Top of Tab 1)
 with tab1:
     cp1, cp2, cp3 = st.columns([1, 1, 2])
