@@ -28,16 +28,29 @@ if 'history' not in st.session_state: st.session_state.history = data["history"]
 # --- 2. STRATEGY ENGINES ---
 
 def get_signal(ticker):
-    """Simple Technical Analysis Engine"""
+    """Refined Technical Analysis Engine - Scalar Optimized"""
     try:
-        df = yf.download(ticker, period="5d", interval="15m", progress=False)
-        if df.empty: return None
-        current_price = df['Close'].iloc[-1]
-        ma = df['Close'].rolling(20).mean().iloc[-1]
-        # Mean Reversion: If price is 2% away from MA, it's a 'reversion' scalp
-        dist = (current_price - ma) / ma
+        df = yf.download(ticker, period="2d", interval="15m", progress=False)
+        if df.empty or len(df) < 20: return None
+        
+        # yfinance often returns a MultiIndex. We flatten it by picking the column.
+        # Then we take the last value (.iloc[-1]) and force it to a float.
+        if isinstance(df.columns, pd.MultiIndex):
+            current_price = float(df['Close'][ticker].iloc[-1])
+            history = df['Close'][ticker]
+        else:
+            current_price = float(df['Close'].iloc[-1])
+            history = df['Close']
+            
+        ma = float(history.rolling(20).mean().iloc[-1])
+        
+        # Calculate distance as a pure float
+        dist = float((current_price - ma) / ma)
+        
         return {"price": current_price, "dist": dist}
-    except: return None
+    except Exception as e:
+        # If we hit an error, return None so the engine skips this tick
+        return None
 
 def execute_engines():
     # Assets for Scalping vs Long-Term
