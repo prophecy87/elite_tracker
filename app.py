@@ -42,30 +42,39 @@ conf = configs[strategy]
 
 # ====================== RE-ENGINEERED ANALYSIS ======================
 def analyze_ticker(ticker):
-    """Fetches data and calculates signals. Now with error reporting."""
+    """Patched Analysis Engine to handle Pandas Series errors."""
     try:
-        # Format for yFinance: Crypto uses '-' (BTC-USD), Stocks use '.' (BRK.B)
         yf_ticker = ticker.replace("/", "-")
-        
-        # Use 15m intervals for more 'Real-Time' feel than 60m
+        # period="2d" and interval="15m" is the sweet spot for balance
         df = yf.download(yf_ticker, period="2d", interval="15m", progress=False)
         
         if df.empty:
-            return {"error": "No data found (Market might be closed or Ticker invalid)"}
+            return {"error": "Market data currently unavailable."}
+
+        # --- FIX: FLATTEN MULTI-INDEX ---
+        # If yfinance returns extra levels, this keeps only the price data
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
         
-        if len(df) < 20:
-            return {"error": f"Insufficient data (Need 20 periods, got {len(df)})"}
+        # Ensure we are looking at a 1D Series for Close prices
+        close_series = df['Close'].squeeze()
+        
+        if len(close_series) < 20:
+            return {"error": f"Warming up... ({len(close_series)}/20 data points)"}
             
-        current_price = float(df['Close'].iloc[-1])
-        ma20 = float(df['Close'].rolling(20).mean().iloc[-1])
+        # Extract scalar values using .iloc[-1] and then casting to float
+        # We use .values[-1] to strip away any remaining pandas labels
+        current_price = float(close_series.values[-1])
+        ma20 = float(close_series.rolling(20).mean().values[-1])
+        
         diff = (current_price - ma20) / ma20
         
         # Determine Signal
-        if diff < -0.015: # 1.5% dip
+        if diff < -0.015: 
             action = "BUY"
             bias = "OVERSOLD"
         elif diff > 0.015:
-            action = "SELL_SIGNAL" # Just a warning for now
+            action = "HOLD" # Safety first: we aren't shorting yet
             bias = "OVERBOUGHT"
         else:
             action = "HOLD"
@@ -80,7 +89,7 @@ def analyze_ticker(ticker):
             "error": None
         }
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"Logic Error: {str(e)}"}
 
 # ====================== EXECUTION ======================
 def execute_trade(ticker, analysis):
