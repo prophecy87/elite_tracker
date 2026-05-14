@@ -4,101 +4,84 @@ import streamlit as st
 from datetime import datetime
 import time
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import MarketOrderRequest, TakeProfitRequest, StopLossRequest
-from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
+from alpaca.trading.requests import MarketOrderRequest, TakeProfitRequest, StopLossRequest, GetOrdersRequest
+from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderStatus
 
 # ====================== PAGE SETUP ======================
-st.set_page_config(page_title="EliteForge v24.3", layout="wide")
+st.set_page_config(page_title="EliteForge v25", layout="wide", page_icon="🔥")
 st.title("🔥 EliteForge • Hybrid Engine")
 
-# Sidebar for status and settings
-st.sidebar.header("System Status")
-log_container = st.sidebar.container()
+# ====================== SESSION STATE (Persistence) ======================
+if 'bot_active' not in st.session_state:
+    st.session_state.bot_active = False
+if 'last_trade_time' not in st.session_state:
+    st.session_state.last_trade_time = {}
 
 # ====================== ALPACA CONNECT ======================
 @st.cache_resource
 def connect_alpaca():
     try:
-        return TradingClient(
-            st.secrets["alpaca"]["api_key"],
-            st.secrets["alpaca"]["secret_key"],
-            paper=True
-        )
+        return TradingClient(st.secrets["alpaca"]["api_key"], st.secrets["alpaca"]["secret_key"], paper=True)
     except Exception as e:
         st.error(f"Alpaca Connection Error: {e}")
         return None
 
 trade_client = connect_alpaca()
 
-# ====================== STRATEGY SETTINGS ======================
-strategy = st.sidebar.selectbox("🎛️ Strategy Mode", ["Safe", "Neutral", "Aggressive", "Pause"], index=1)
-configs = {
-    "Safe": {"risk": 0.02, "tp": 0.02, "sl": 0.01},
-    "Neutral": {"risk": 0.04, "tp": 0.05, "sl": 0.02},
-    "Aggressive": {"risk": 0.08, "tp": 0.10, "sl": 0.04},
-    "Pause": {"risk": 0.0, "tp": 0.0, "sl": 0.0}
-}
-conf = configs[strategy]
+# ====================== SIDEBAR CONTROLS ======================
+with st.sidebar:
+    st.header("🕹️ Control Panel")
+    
+    # THE MASTER PAUSE SWITCH
+    if st.session_state.bot_active:
+        if st.button("🛑 STOP TRADING BOT", use_container_width=True, type="primary"):
+            st.session_state.bot_active = False
+            st.rerun()
+    else:
+        if st.button("▶️ START TRADING BOT", use_container_width=True):
+            st.session_state.bot_active = True
+            st.rerun()
 
-# ====================== RE-ENGINEERED ANALYSIS ======================
+    status_color = "green" if st.session_state.bot_active else "red"
+    st.markdown(f"Status: :{status_color}[{'RUNNING' if st.session_state.bot_active else 'PAUSED'}]")
+    
+    st.divider()
+    strategy_mode = st.selectbox("🎛️ Risk Profile", ["Safe", "Neutral", "Aggressive"], index=1)
+    
+    configs = {
+        "Safe": {"risk": 0.02, "tp": 0.02, "sl": 0.01},
+        "Neutral": {"risk": 0.04, "tp": 0.05, "sl": 0.02},
+        "Aggressive": {"risk": 0.08, "tp": 0.10, "sl": 0.04}
+    }
+    conf = configs[strategy_mode]
+
+# ====================== LOGIC & ANALYSIS ======================
 def analyze_ticker(ticker):
-    """Patched Analysis Engine to handle Pandas Series errors."""
     try:
         yf_ticker = ticker.replace("/", "-")
-        # period="2d" and interval="15m" is the sweet spot for balance
-        df = yf.download(yf_ticker, period="2d", interval="15m", progress=False)
+        df = yf.download(yf_ticker, period="5d", interval="15m", progress=False)
+        if df.empty: return {"error": "No Data"}
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         
-        if df.empty:
-            return {"error": "Market data currently unavailable."}
-
-        # --- FIX: FLATTEN MULTI-INDEX ---
-        # If yfinance returns extra levels, this keeps only the price data
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        
-        # Ensure we are looking at a 1D Series for Close prices
         close_series = df['Close'].squeeze()
-        
-        if len(close_series) < 20:
-            return {"error": f"Warming up... ({len(close_series)}/20 data points)"}
-            
-        # Extract scalar values using .iloc[-1] and then casting to float
-        # We use .values[-1] to strip away any remaining pandas labels
         current_price = float(close_series.values[-1])
         ma20 = float(close_series.rolling(20).mean().values[-1])
-        
         diff = (current_price - ma20) / ma20
         
-        # Determine Signal
-        if diff < -0.015: 
-            action = "BUY"
-            bias = "OVERSOLD"
-        elif diff > 0.015:
-            action = "HOLD" # Safety first: we aren't shorting yet
-            bias = "OVERBOUGHT"
-        else:
-            action = "HOLD"
-            bias = "NEUTRAL"
-            
-        return {
-            "action": action, 
-            "price": current_price, 
-            "ma": ma20,
-            "diff": diff,
-            "bias": bias,
-            "error": None
-        }
+        # Entry Logic
+        action = "BUY" if diff < -0.015 else "HOLD"
+        return {"action": action, "price": current_price, "diff": diff, "ma": ma20, "error": None}
     except Exception as e:
-        return {"error": f"Logic Error: {str(e)}"}
+        return {"error": str(e)}
 
-# ====================== EXECUTION ======================
 def execute_trade(ticker, analysis):
-    # (Same logic as before, but ensure symbol formatting is correct for Alpaca)
+    if not st.session_state.bot_active:
+        return False
+    
     try:
-        symbol = ticker.replace("/", "") # Alpaca wants BTCUSD
+        symbol = ticker.replace("/", "")
         acc = trade_client.get_account()
-        cash = float(acc.cash)
-        qty = (cash * conf['risk']) / analysis['price']
+        qty = (float(acc.cash) * conf['risk']) / analysis['price']
         qty = round(qty, 4) if "/" in ticker else int(qty)
         
         if qty > 0:
@@ -111,51 +94,88 @@ def execute_trade(ticker, analysis):
             trade_client.submit_order(order)
             return True
     except Exception as e:
-        st.sidebar.error(f"Execution Error: {e}")
+        st.sidebar.error(f"Trade Failed: {e}")
     return False
 
-# ====================== DASHBOARD UI ======================
-tab1, tab2 = st.tabs(["🏛️ Live Terminal", "📜 Account Info"])
+# ====================== UI TABS ======================
+tab_monitor, tab_positions, tab_history = st.tabs(["📊 Live Scanner", "💼 Active Positions", "📜 Order Ledger"])
 
-with tab1:
-    st.subheader(f"📡 System Scan: {datetime.now().strftime('%H:%M:%S')}")
-    
-    # Grid for assets
+with tab_monitor:
+    st.subheader(f"📡 Market Scan • {datetime.now().strftime('%H:%M:%S')}")
     watchlist = ["BTC/USD", "ETH/USD", "SOL/USD", "NVDA", "TSLA", "AAPL"]
     cols = st.columns(3)
     
     for i, ticker in enumerate(watchlist):
         with cols[i % 3]:
-            with st.status(f"Analyzing {ticker}...", expanded=True) as s:
-                result = analyze_ticker(ticker)
+            res = analyze_ticker(ticker)
+            if res.get("error"):
+                st.error(f"{ticker}: {res['error']}")
+            else:
+                # Color code based on signal
+                delta_color = "inverse" if res['action'] == "BUY" else "normal"
+                st.metric(ticker, f"${res['price']:,.2f}", f"{res['diff']:.2%}", delta_color=delta_color)
                 
-                if result.get("error"):
-                    st.error(f"Error: {result['error']}")
-                else:
-                    st.metric(ticker, f"${result['price']:,.2f}", f"{result['diff']:.2%}")
-                    st.write(f"**Bias:** {result['bias']}")
-                    
-                    if result['action'] == "BUY" and strategy != "Pause":
-                        if execute_trade(ticker, result):
-                            st.success("TRADE PLACED")
-                    elif result['action'] == "HOLD":
-                        st.info("Signal: HOLD")
-                s.update(label=f"{ticker} Analysis Complete", state="complete")
+                # Logic for Trade Execution
+                if res['action'] == "BUY" and st.session_state.bot_active:
+                    if execute_trade(ticker, res):
+                        st.toast(f"✅ Executed Buy for {ticker}", icon="🚀")
+                
+                # Potential Entry Insight
+                st.caption(f"Target Entry: < ${res['ma'] * 0.985:,.2f}")
 
-with tab2:
+with tab_positions:
+    st.subheader("💼 Real-Time Portfolio")
     try:
-        acc = trade_client.get_account()
-        st.json({
-            "Equity": f"${float(acc.equity):,.2f}",
-            "Cash": f"${float(acc.cash):,.2f}",
-            "Buying Power": f"${float(acc.buying_power):,.2f}",
-            "Initial Margin": acc.initial_margin
-        })
+        positions = trade_client.get_all_positions()
+        if positions:
+            pos_df = pd.DataFrame([{
+                "Symbol": p.symbol,
+                "Qty": p.qty,
+                "Entry": f"${float(p.avg_entry_price):,.2f}",
+                "Current": f"${float(p.current_price):,.2f}",
+                "PnL (%)": f"{(float(p.unrealized_plpc) * 100):.2f}%",
+                "Unrealized PnL ($)": f"${float(p.unrealized_pl):,.2f}"
+            } for p in positions])
+            st.table(pos_df)
+        else:
+            st.info("No active positions.")
     except:
-        st.warning("Could not load account details.")
+        st.warning("Could not sync positions.")
+
+with tab_history:
+    st.subheader("📜 Recent Activity")
+    try:
+        orders = trade_client.get_orders(GetOrdersRequest(status=QueryOrderStatus.ALL, limit=10))
+        if orders:
+            order_list = []
+            for o in orders:
+                order_list.append({
+                    "Date": o.created_at.strftime("%m-%d %H:%M"),
+                    "Asset": o.symbol,
+                    "Side": o.side,
+                    "Qty": o.qty,
+                    "Status": o.status
+                })
+            st.dataframe(pd.DataFrame(order_list), use_container_width=True)
+    except:
+        st.write("Order history temporarily unavailable.")
+
+# ====================== GLOBAL METRICS BAR ======================
+st.divider()
+try:
+    acc = trade_client.get_account()
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total Equity", f"${float(acc.equity):,.2f}")
+    m2.metric("Buying Power", f"${float(acc.buying_power):,.2f}")
+    
+    # Calculate Day's PnL
+    day_pnl = float(acc.equity) - float(acc.last_equity)
+    pnl_color = "normal" if day_pnl >= 0 else "inverse"
+    m3.metric("Daily PnL", f"${day_pnl:,.2f}", f"{(day_pnl/float(acc.last_equity)*100):.2f}%", delta_color=pnl_color)
+    m4.metric("Market Status", "OPEN" if trade_client.get_clock().is_open else "CLOSED")
+except:
+    pass
 
 # ====================== REFRESH ======================
-st.sidebar.write("---")
-st.sidebar.write(f"Last update: {datetime.now().strftime('%H:%M:%S')}")
-time.sleep(30) # Refresh more frequently for testing
+time.sleep(30)
 st.rerun()
