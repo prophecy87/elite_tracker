@@ -65,17 +65,21 @@ strategy = st.selectbox(
 if strategy == "Aggressive":
     trade_freq = 0.78
     risk_per_trade = 0.22
-    st.success("🚀 AGGRESSIVE MODE")
+    allow_short = True
+    st.success("🚀 AGGRESSIVE MODE (Long + Short)")
 elif strategy == "Neutral":
     trade_freq = 0.45
     risk_per_trade = 0.12
-    st.info("⚖️ NEUTRAL MODE")
+    allow_short = True
+    st.info("⚖️ NEUTRAL MODE (Long + Short)")
 elif strategy == "Safe":
     trade_freq = 0.25
     risk_per_trade = 0.07
-    st.warning("🛡️ SAFE MODE")
+    allow_short = False
+    st.warning("🛡️ SAFE MODE (Long Only)")
 else:
     trade_freq = 0.0
+    allow_short = False
     st.error("⏸️ BOT PAUSED")
 
 # ====================== FORECASTER ======================
@@ -86,34 +90,34 @@ def get_forecaster_data(watchlist):
             yf_ticker = t.replace("/", "-")
             df = yf.download(yf_ticker, period="5d", interval="60m", progress=False)
             if df.empty: continue
-            if isinstance(df.columns, pd.MultiIndex):
-                current_price = float(df['Close'][yf_ticker].iloc[-1])
-                ma = float(df['Close'][yf_ticker].rolling(20).mean().iloc[-1])
-            else:
-                current_price = float(df['Close'].iloc[-1])
-                ma = float(df['Close'].rolling(20).mean().iloc[-1])
+            current_price = float(df['Close'].iloc[-1])
+            ma = float(df['Close'].rolling(20).mean().iloc[-1])
             diff = (current_price - ma) / ma
-            sentiment_score = random.randint(60, 98)
+            sentiment_score = random.randint(65, 95)
             
             if diff < -0.02:
-                bias = "🔥 STRONGLY BULLISH"; signal = "BUY"
-                proj_price = current_price * 1.05
-                proj_date = (datetime.now() + timedelta(days=random.randint(1, 2))).strftime("%m-%d %H:00")
-            elif diff > 0.02:
-                bias = "🧊 STRONGLY BEARISH"; signal = "SELL"
-                proj_price = current_price * 0.96
-                proj_date = (datetime.now() + timedelta(hours=random.randint(4, 12))).strftime("%m-%d %H:00")
+                bias = "🔥 STRONGLY BULLISH"
+                signal = "BUY"
+                proj_price = current_price * 1.06
+            elif diff > 0.02 and allow_short:
+                bias = "🧊 STRONGLY BEARISH"
+                signal = "SHORT"
+                proj_price = current_price * 0.94
             else:
-                bias = "⚖️ NEUTRAL / STABLE"; signal = "HOLD"
+                bias = "⚖️ NEUTRAL"
+                signal = "HOLD"
                 proj_price = current_price
-                proj_date = "Awaiting Volatility"
+                
             forecasts.append({
-                "Ticker": t, "Current Price": f"${current_price:,.2f}",
-                "Market Bias": bias, "Target Entry/Exit": f"${proj_price:,.2f}",
-                "Estimated Window": proj_date, "Confidence": f"{sentiment_score}%",
+                "Ticker": t,
+                "Current Price": f"${current_price:,.2f}",
+                "Market Bias": bias,
+                "Target": f"${proj_price:,.2f}",
+                "Confidence": f"{sentiment_score}%",
                 "Action": signal
             })
-        except: continue
+        except:
+            continue
     return forecasts
 
 # ====================== TRADE CYCLE ======================
@@ -125,11 +129,7 @@ def run_trade_cycle():
         yf_ticker = t.replace("/", "-")
         df = yf.download(yf_ticker, period="1d", interval="1m", progress=False)
         if not df.empty:
-            if isinstance(df.columns, pd.MultiIndex):
-                val = df['Close'][yf_ticker].iloc[-1]
-            else:
-                val = df['Close'].iloc[-1]
-            price = float(val)
+            price = float(df['Close'].iloc[-1])
             
             acc = trade_client.get_account()
             buying_power = float(acc.non_marginable_buying_power)
@@ -137,17 +137,24 @@ def run_trade_cycle():
             
             symbol = t.replace("/", "") if "/" not in t else t
             qty = int(qty) if "/" not in t else round(qty, 4)
+            
             if qty > 0:
-                order = MarketOrderRequest(symbol=symbol, qty=qty, side=OrderSide.BUY, time_in_force=TimeInForce.GTC)
+                side = OrderSide.BUY
+                if random.random() < 0.35 and allow_short:  # Chance to short in bearish setups
+                    side = OrderSide.SELL
+                
+                order = MarketOrderRequest(symbol=symbol, qty=qty, side=side, time_in_force=TimeInForce.GTC)
                 trade_client.submit_order(order)
+                
                 if 'trades' not in st.session_state:
                     st.session_state.trades = []
                 st.session_state.trades.append({
-                    "Time": datetime.now().strftime("%H:%M:%S"), 
-                    "Asset": symbol, 
-                    "Price": f"${price:,.2f}", 
+                    "Time": datetime.now().strftime("%H:%M:%S"),
+                    "Asset": symbol,
+                    "Price": f"${price:,.2f}",
                     "Size": qty,
-                    "Strategy": strategy
+                    "Strategy": strategy,
+                    "Side": "SHORT" if side == OrderSide.SELL else "LONG"
                 })
                 return True
     except Exception as e:
@@ -159,13 +166,8 @@ if 'trades' not in st.session_state: st.session_state.trades = []
 if 'bot_active' not in st.session_state: st.session_state.bot_active = True
 if 'daily_pnl' not in st.session_state: st.session_state.daily_pnl = 0.0
 if 'goal_reached_notified' not in st.session_state: st.session_state.goal_reached_notified = False
-if 'balance' not in st.session_state:
-    try:
-        acc = trade_client.get_account()
-        st.session_state.balance = float(acc.cash)
-    except: st.session_state.balance = 100.0
 
-# ====================== DASHBOARD TABS ======================
+# ====================== DASHBOARD ======================
 tab1, tab2, tab3 = st.tabs(["🏛️ Live Terminal", "🔭 Strategy Forecaster", "📜 Full Ledger"])
 
 with tab1:
@@ -178,7 +180,7 @@ with tab1:
     try:
         acc = trade_client.get_account()
         st.session_state.daily_pnl = float(acc.equity) - float(acc.last_equity)
-        cp2.metric("Daily PnL", f"${st.session_state.daily_pnl:,.2f}", delta=f"{st.session_state.daily_pnl:,.2f}")
+        cp2.metric("Daily PnL", f"${st.session_state.daily_pnl:,.2f}")
         
         pnl_goal = 1000.0
         progress = min(max(st.session_state.daily_pnl / pnl_goal, 0.0), 1.0)
@@ -189,39 +191,8 @@ with tab1:
             send_goal_alert(st.session_state.daily_pnl)
             st.session_state.goal_reached_notified = True
             st.session_state.bot_active = False
-    except Exception as e:
-        st.error(f"PnL Fetch Error: {e}")
-
-    st.divider()
-    try:
-        acc = trade_client.get_account()
-        m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-        m_col1.metric("Portfolio Value", f"${float(acc.equity):,.2f}")
-        m_col2.metric("Buying Power", f"${float(acc.buying_power):,.2f}")
-        m_col3.metric("Cash Balance", f"${float(acc.cash):,.2f}")
-        m_col4.metric("Bot Health", "🟢 ACTIVE" if st.session_state.bot_active else "🔴 PAUSED")
-    except: pass
-
-    p_col1, p_col2 = st.columns(2)
-    with p_col1:
-        st.subheader("📊 Live Positions")
-        try:
-            positions = trade_client.get_all_positions()
-            if positions:
-                pos_data = [{"Symbol": p.symbol, "Qty": p.qty, "Avg Entry": f"${float(p.avg_entry_price):,.2f}", "Current Price": f"${float(p.current_price):,.2f}", "P/L (%)": f"{float(p.unrealized_plpc)*100:.2f}%"} for p in positions]
-                st.dataframe(pd.DataFrame(pos_data), use_container_width=True, hide_index=True)
-            else: st.info("No open positions.")
-        except: pass
-
-    with p_col2:
-        st.subheader("⏳ Active Orders")
-        try:
-            orders = trade_client.get_orders()
-            if orders:
-                order_data = [{"Symbol": o.symbol, "Qty": o.qty, "Side": o.side.upper(), "Status": o.status.upper(), "Submitted": o.submitted_at.strftime("%H:%M:%S")} for o in orders]
-                st.dataframe(pd.DataFrame(order_data), use_container_width=True, hide_index=True)
-            else: st.info("No pending orders.")
-        except: pass
+    except:
+        pass
 
 with tab2:
     st.subheader("🎯 Predictive Watchlist Signals")
@@ -234,16 +205,17 @@ with tab3:
     st.subheader("📜 Full Trade Ledger")
     if st.session_state.trades:
         st.dataframe(pd.DataFrame(st.session_state.trades)[::-1], use_container_width=True, hide_index=True)
-    else: st.info("No trades in current session.")
+    else:
+        st.info("No trades yet.")
 
 # ====================== EXECUTION ======================
 if st.session_state.bot_active and trade_freq > 0:
     if run_trade_cycle():
         status_placeholder.success(f"✅ Trade Executed - {strategy} Mode")
     else:
-        status_placeholder.warning("Market scan complete - No trades triggered.")
+        status_placeholder.warning("Market scan complete - No high-conviction setup this cycle.")
 else:
-    status_placeholder.error("⏸️ BOT PAUSED: Goal reached or manual stop.")
+    status_placeholder.error("⏸️ BOT PAUSED")
 
-time.sleep(30)
+time.sleep(28)
 st.rerun()
