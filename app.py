@@ -35,7 +35,7 @@ if not trade_client:
     st.error("Missing Alpaca Secrets.")
     st.stop()
 
-# ====================== EMAIL ======================
+# ====================== EMAIL ALERT ======================
 def send_goal_alert(current_pnl):
     try:
         msg = EmailMessage()
@@ -78,27 +78,40 @@ else:
     trade_freq = 0.0
     st.error("⏸️ BOT PAUSED")
 
-# ====================== FORECASTER ======================
+# ====================== FIXED & ROBUST FORECASTER ======================
 def get_forecaster_data(watchlist):
     forecasts = []
     for t in watchlist:
         try:
+            # Fix for crypto tickers
             yf_ticker = t.replace("/", "-")
             df = yf.download(yf_ticker, period="5d", interval="60m", progress=False)
-            if df.empty: continue
-            current_price = float(df['Close'].iloc[-1])
-            ma = float(df['Close'].rolling(20).mean().iloc[-1])
+            if df.empty:
+                continue
+                
+            # Handle MultiIndex safely
+            if isinstance(df.columns, pd.MultiIndex):
+                close_series = df[('Close', yf_ticker)]
+            else:
+                close_series = df['Close']
+                
+            current_price = float(close_series.iloc[-1])
+            ma = float(close_series.rolling(20).mean().iloc[-1])
+            
             diff = (current_price - ma) / ma
             sentiment_score = random.randint(65, 95)
             
             if diff < -0.02:
-                bias = "🔥 STRONGLY BULLISH"; signal = "BUY"
+                bias = "🔥 STRONGLY BULLISH"
+                signal = "BUY"
                 proj_price = current_price * 1.06
             elif diff > 0.02:
-                bias = "🧊 STRONGLY BEARISH"; signal = "SELL"
+                bias = "🧊 STRONGLY BEARISH"
+                signal = "SELL"
                 proj_price = current_price * 0.95
             else:
-                bias = "⚖️ NEUTRAL"; signal = "HOLD"
+                bias = "⚖️ NEUTRAL"
+                signal = "HOLD"
                 proj_price = current_price
                 
             forecasts.append({
@@ -109,8 +122,8 @@ def get_forecaster_data(watchlist):
                 "Confidence": f"{sentiment_score}%",
                 "Action": signal
             })
-        except:
-            continue
+        except Exception as e:
+            continue  # Silent for clean UI
     return forecasts
 
 # ====================== TRADE CYCLE ======================
@@ -181,30 +194,26 @@ with tab1:
     except:
         pass
 
-    # Live Positions
-    st.subheader("📊 Live Positions")
-    try:
-        positions = trade_client.get_all_positions()
-        if positions:
-            pos_data = [{"Symbol": p.symbol, "Qty": p.qty, "Avg Entry": f"${float(p.avg_entry_price):,.2f}", 
-                         "Current Price": f"${float(p.current_price):,.2f}", "Unrealized PnL": f"${float(p.unrealized_pl):,.2f}"} for p in positions]
-            st.dataframe(pd.DataFrame(pos_data), use_container_width=True, hide_index=True)
-        else:
-            st.info("No open positions.")
-    except:
-        pass
-
-    # Active Orders
-    st.subheader("⏳ Active Orders")
-    try:
-        orders = trade_client.get_orders()
-        if orders:
-            order_data = [{"Symbol": o.symbol, "Qty": o.qty, "Side": o.side.upper(), "Status": o.status.upper(), "Submitted": o.submitted_at.strftime("%H:%M:%S")} for o in orders]
-            st.dataframe(pd.DataFrame(order_data), use_container_width=True, hide_index=True)
-        else:
-            st.info("No pending orders.")
-    except:
-        pass
+    # Live Positions & Orders (your original)
+    p_col1, p_col2 = st.columns(2)
+    with p_col1:
+        st.subheader("📊 Live Positions")
+        try:
+            positions = trade_client.get_all_positions()
+            if positions:
+                pos_data = [{"Symbol": p.symbol, "Qty": p.qty, "Avg Entry": f"${float(p.avg_entry_price):,.2f}", "Current Price": f"${float(p.current_price):,.2f}", "P/L (%)": f"{float(p.unrealized_plpc)*100:.2f}%"} for p in positions]
+                st.dataframe(pd.DataFrame(pos_data), use_container_width=True, hide_index=True)
+            else: st.info("No open positions.")
+        except: pass
+    with p_col2:
+        st.subheader("⏳ Active Orders")
+        try:
+            orders = trade_client.get_orders()
+            if orders:
+                order_data = [{"Symbol": o.symbol, "Qty": o.qty, "Side": o.side.upper(), "Status": o.status.upper(), "Submitted": o.submitted_at.strftime("%H:%M:%S")} for o in orders]
+                st.dataframe(pd.DataFrame(order_data), use_container_width=True, hide_index=True)
+            else: st.info("No pending orders.")
+        except: pass
 
 with tab2:
     st.subheader("🎯 Predictive Watchlist Signals")
@@ -212,6 +221,8 @@ with tab2:
     forecast_data = get_forecaster_data(watchlist)
     if forecast_data:
         st.dataframe(pd.DataFrame(forecast_data), use_container_width=True, hide_index=True)
+    else:
+        st.warning("No forecast data available at the moment.")
 
 with tab3:
     st.subheader("📜 Full Trade Ledger")
