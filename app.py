@@ -66,7 +66,8 @@ html, body, .stApp {
 }
 
 /* hide streamlit chrome */
-#MainMenu, footer, header { visibility: hidden; }
+#MainMenu { visibility: hidden; }
+footer { visibility: hidden; }
 .block-container { padding: 1.5rem 2rem 4rem; max-width: 1600px; }
 
 /* ── masthead ── */
