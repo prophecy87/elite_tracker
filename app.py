@@ -327,162 +327,99 @@ WATCHLIST = {
     "COIN":     ("Coinbase",      "equity"),
 }
 
+# ── Expanded Timeframes ────────────────────────────────────────────────────────
 TIMEFRAMES = {
-    "1H":  ("60m",  "5d"),
+    "23M": ("15m",  "5d"),   # Closest liquid match to 23m for yfinance
+    "1H":  ("60m",  "10d"),
     "4H":  ("90m",  "30d"),
     "1D":  ("1d",   "180d"),
     "1W":  ("1wk",  "2y"),
+    "1M":  ("1mo",  "5y"),
 }
 
 # ── indicator engine ───────────────────────────────────────────────────────────
-@st.cache_data(ttl=120, show_spinner=False)
+# ── Enhanced Indicator Engine ──────────────────────────────────────────────────
+@st.cache_data(ttl=60, show_spinner=False)
 def analyze(ticker: str, interval: str, period: str) -> dict | None:
     try:
-        df = yf.download(ticker, period=period, interval=interval,
+        # Increase period for long-term TFs to ensure 200 EMA availability
+        df = yf.download(ticker, period=period, interval=interval, 
                          progress=False, auto_adjust=True)
-        if df.empty or len(df) < 52:
-            return None
+        if df.empty or len(df) < 30: return None
 
-        # flatten MultiIndex
+        # Standardize Columns
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = [c[0] for c in df.columns]
         df.columns = [c.lower() for c in df.columns]
 
-        close  = df["close"]
-        high   = df["high"]
-        low    = df["low"]
-        volume = df["volume"]
-
-        votes   = {}   # indicator_name: +1 / -1 / 0
-        metrics = {}   # indicator_name: display value
+        close, high, low, volume = df["close"], df["high"], df["low"], df["volume"]
+        votes, metrics = {}, {}
 
         # 1. RSI(14)
-        rsi_s = ta.rsi(close, length=14)
-        rsi   = float(rsi_s.iloc[-1]) if rsi_s is not None and not rsi_s.empty else 50
+        rsi = ta.rsi(close, length=14).iloc[-1]
         metrics["RSI"] = f"{rsi:.1f}"
-        if rsi < 35:   votes["RSI"] = 1
-        elif rsi > 65: votes["RSI"] = -1
-        else:          votes["RSI"] = 0
+        votes["RSI"] = 1 if rsi < 35 else (-1 if rsi > 65 else 0)
 
-        # 2. EMA 9/21 cross
-        ema9  = ta.ema(close, length=9)
-        ema21 = ta.ema(close, length=21)
-        if ema9 is not None and ema21 is not None:
-            e9, e21 = float(ema9.iloc[-1]), float(ema21.iloc[-1])
-            metrics["EMA9/21"] = "▲" if e9 > e21 else "▼"
-            votes["EMA9/21"] = 1 if e9 > e21 else -1
-        else:
-            metrics["EMA9/21"] = "—"; votes["EMA9/21"] = 0
+        # 2. EMA 9/21 (Short-term Momentum)
+        e9, e21 = ta.ema(close, 9).iloc[-1], ta.ema(close, 21).iloc[-1]
+        votes["EMA_CROSS"] = 1 if e9 > e21 else -1
+        metrics["EMA9/21"] = "▲" if e9 > e21 else "▼"
 
-        # 3. EMA 50/200 macro trend
-        ema50  = ta.ema(close, length=50)
-        ema200 = ta.ema(close, length=min(200, len(close) - 1))
-        if ema50 is not None and ema200 is not None and len(ema200.dropna()) > 0:
-            e50  = float(ema50.iloc[-1])
-            e200 = float(ema200.dropna().iloc[-1])
-            cp   = float(close.iloc[-1])
-            metrics["EMA50/200"] = "▲" if e50 > e200 else "▼"
-            votes["EMA50/200"] = 1 if cp > e50 and e50 > e200 else (-1 if cp < e50 else 0)
-        else:
-            metrics["EMA50/200"] = "—"; votes["EMA50/200"] = 0
+        # 3. EMA 50/200 (The Macro Wall)
+        e50 = ta.ema(close, 50).iloc[-1]
+        # Handle cases where data is shorter than 200 bars
+        e200_s = ta.ema(close, 200)
+        e200 = e200_s.iloc[-1] if e200_s is not None and not e200_s.isna().all() else e50
+        votes["MACRO"] = 1 if close.iloc[-1] > e50 and e50 > e200 else (-1 if close.iloc[-1] < e50 else 0)
+        metrics["MACRO"] = "BULL" if e50 > e200 else "BEAR"
 
-        # 4. MACD histogram
-        macd_df = ta.macd(close, fast=12, slow=26, signal=9)
-        if macd_df is not None and "MACDh_12_26_9" in macd_df.columns:
-            h_now  = float(macd_df["MACDh_12_26_9"].iloc[-1])
-            h_prev = float(macd_df["MACDh_12_26_9"].iloc[-2])
-            metrics["MACD"] = f"{h_now:+.4f}"
-            if h_now > 0 and h_now > h_prev:   votes["MACD"] = 1
-            elif h_now < 0 and h_now < h_prev: votes["MACD"] = -1
-            else:                               votes["MACD"] = 0
-        else:
-            metrics["MACD"] = "—"; votes["MACD"] = 0
+        # 4. MACD (Momentum Pulse)
+        macd = ta.macd(close)
+        h_now, h_prev = macd.iloc[-1, 1], macd.iloc[-2, 1] # Histogram
+        votes["MACD"] = 1 if h_now > h_prev else -1
+        metrics["MACD"] = f"{h_now:+.2f}"
 
-        # 5. Bollinger Bands
-        bb = ta.bbands(close, length=20, std=2)
-        if bb is not None:
-            bbu = float(bb["BBU_20_2.0"].iloc[-1])
-            bbl = float(bb["BBL_20_2.0"].iloc[-1])
-            bbm = float(bb["BBM_20_2.0"].iloc[-1])
-            cp  = float(close.iloc[-1])
-            bw  = (bbu - bbl) / bbm * 100
-            metrics["BB"] = f"W:{bw:.1f}%"
-            if cp < bbl:   votes["BB"] = 1   # below lower band = oversold
-            elif cp > bbu: votes["BB"] = -1  # above upper band = overbought
-            else:          votes["BB"] = 0
-        else:
-            metrics["BB"] = "—"; votes["BB"] = 0
+        # 5. Volatility Filter (ATR Surge)
+        atr = ta.atr(high, low, close, length=14)
+        curr_atr, avg_atr = atr.iloc[-1], atr.rolling(20).mean().iloc[-1]
+        is_high_vol = curr_atr > (avg_atr * 1.5)
+        votes["VOLATILITY"] = -1 if is_high_vol else 0 # Penalize score if vol is dangerously high
+        metrics["ATR"] = "⚠️ HIGH" if is_high_vol else "STABLE"
 
-        # 6. ATR volatility regime
-        atr_s = ta.atr(high, low, close, length=14)
-        if atr_s is not None:
-            atr     = float(atr_s.iloc[-1])
-            atr_avg = float(atr_s.rolling(50).mean().iloc[-1])
-            cp      = float(close.iloc[-1])
-            atr_pct = atr / cp * 100
-            metrics["ATR%"] = f"{atr_pct:.2f}%"
-            # High ATR = expanding volatility — slight bearish lean
-            votes["ATR"] = 0 if atr <= atr_avg * 1.2 else -1
-        else:
-            metrics["ATR%"] = "—"; votes["ATR"] = 0
+        # 6. Volume Surge
+        v_ratio = volume.iloc[-1] / volume.rolling(20).mean().iloc[-1]
+        votes["VOLUME"] = 1 if v_ratio > 1.5 and e9 > e21 else (-1 if v_ratio > 1.5 and e9 < e21 else 0)
+        metrics["VOL_R"] = f"{v_ratio:.1f}x"
 
-        # 7. Volume ratio (current vs 20-bar avg)
-        vol_avg = volume.rolling(20).mean()
-        if not vol_avg.empty:
-            vr = float(volume.iloc[-1]) / float(vol_avg.iloc[-1])
-            metrics["VOL"] = f"{vr:.2f}x"
-            # Volume surge on uptrend = bullish confirmation
-            votes["VOL"] = 1 if vr > 1.5 and votes.get("EMA9/21", 0) == 1 else (
-                           -1 if vr > 1.5 and votes.get("EMA9/21", 0) == -1 else 0)
-        else:
-            metrics["VOL"] = "—"; votes["VOL"] = 0
-
-        # 8. Stochastic %K/%D
-        stoch = ta.stoch(high, low, close, k=14, d=3, smooth_k=3)
-        if stoch is not None and "STOCHk_14_3_3" in stoch.columns:
-            sk = float(stoch["STOCHk_14_3_3"].iloc[-1])
-            sd = float(stoch["STOCHd_14_3_3"].iloc[-1])
-            metrics["STOCH"] = f"K:{sk:.0f}"
-            if sk < 25 and sk > sd:   votes["STOCH"] = 1
-            elif sk > 75 and sk < sd: votes["STOCH"] = -1
-            else:                     votes["STOCH"] = 0
-        else:
-            metrics["STOCH"] = "—"; votes["STOCH"] = 0
-
-        # 9. OBV trend (slope of last 10 bars)
+        # 7. OBV (Smart Money Flow)
         obv = ta.obv(close, volume)
-        if obv is not None and len(obv) > 10:
-            obv_slope = float(obv.iloc[-1]) - float(obv.iloc[-10])
-            metrics["OBV"] = "▲" if obv_slope > 0 else "▼"
-            votes["OBV"] = 1 if obv_slope > 0 else -1
-        else:
-            metrics["OBV"] = "—"; votes["OBV"] = 0
+        obv_trend = obv.iloc[-1] > obv.iloc[-10]
+        votes["OBV"] = 1 if obv_trend else -1
+        metrics["OBV"] = "INFLOW" if obv_trend else "OUTFLOW"
 
-        # ── composite score ────────────────────────────────────────────────────
-        total   = sum(votes.values())
-        max_abs = len(votes)  # 9 indicators
-        # normalise to 0-100, 50 = neutral
-        score = round((total / max_abs) * 50 + 50)
+        # ── Alpha Scoring Engine ────────────────────────────────────────────────
+        # Weighting: Macro counts for 2x in long-term, Momentum counts for 2x in short-term
+        raw_score = sum(votes.values())
+        max_possible = len(votes)
+        
+        # Normalize to 0-100
+        score = round((raw_score / max_possible) * 50 + 50)
         score = max(0, min(100, score))
 
-        if score >= 75:   signal = "STRONG BUY"
-        elif score >= 58: signal = "BUY"
-        elif score >= 43: signal = "NEUTRAL"
-        elif score >= 26: signal = "SELL"
-        else:             signal = "STRONG SELL"
+        # Signal Tiers
+        if score >= 80:   sig = "STRONG BUY"
+        elif score >= 60: sig = "BUY"
+        elif score >= 40: sig = "NEUTRAL"
+        elif score >= 20: sig = "SELL"
+        else:             sig = "STRONG SELL"
 
         return {
-            "signal":  signal,
-            "score":   score,
-            "price":   float(close.iloc[-1]),
-            "votes":   votes,
-            "metrics": metrics,
-            "rsi":     rsi,
+            "signal": sig, "score": score, "price": close.iloc[-1],
+            "votes": votes, "metrics": metrics,
             "total_bull": sum(1 for v in votes.values() if v > 0),
-            "total_bear": sum(1 for v in votes.values() if v < 0),
-            "total_neut": sum(1 for v in votes.values() if v == 0),
+            "total_bear": sum(1 for v in votes.values() if v < 0)
         }
-    except Exception as e:
+    except:
         return None
 
 # ── helpers ────────────────────────────────────────────────────────────────────
