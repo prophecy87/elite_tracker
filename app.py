@@ -1,6 +1,7 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import pandas_ta_classic as ta
 import plotly.graph_objects as go
 from datetime import datetime
 import time
@@ -16,67 +17,54 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🔥 EliteForge • Strategic Entry & Exit Dashboard")
-st.caption("Multi-timeframe signals with clear reasoning • Auto-refreshes every 60 seconds")
+st.caption("Real indicators + clear reasoning • Auto-refreshes every 60 seconds")
 
-# Elite Watchlist
+# Elite watchlist
 watchlist = {
-    "BTC-USD": "Bitcoin",
-    "ETH-USD": "Ethereum",
-    "SOL-USD": "Solana",
-    "NVDA": "NVIDIA",
-    "TSLA": "Tesla",
-    "MSTR": "MicroStrategy",
-    "AAPL": "Apple",
-    "COIN": "Coinbase"
+    "BTC-USD": "Bitcoin", "ETH-USD": "Ethereum", "SOL-USD": "Solana",
+    "NVDA": "NVIDIA", "TSLA": "Tesla", "MSTR": "MicroStrategy",
+    "AAPL": "Apple", "COIN": "Coinbase"
 }
 
 timeframes = {"4 Hour": "90m", "1 Week": "1wk", "1 Month": "1mo"}
 
 @st.cache_data(ttl=60)
-def analyze_ticker(ticker):
+def analyze_asset(ticker):
     results = {}
     for name, interval in timeframes.items():
         try:
             period = "60d" if interval == "90m" else "1y"
             df = yf.download(ticker, period=period, interval=interval, progress=False)
-            if df.empty or len(df) < 30:
+            if df.empty or len(df) < 50:
                 results[name] = None
                 continue
 
-            close = df['Close']
-            price = float(close.iloc[-1])
+            # Clean columns for pandas_ta
+            df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
 
-            # RSI (14)
-            delta = close.diff()
-            gain = delta.where(delta > 0, 0).rolling(14).mean()
-            loss = -delta.where(delta < 0, 0).rolling(14).mean()
-            rs = gain / loss
-            rsi = 100 - (100 / (1 + rs)).iloc[-1]
-
-            # Bollinger Bands
-            ma20 = close.rolling(20).mean()
-            std20 = close.rolling(20).std()
-            upper = ma20 + 2 * std20
-            lower = ma20 - 2 * std20
-
-            # SMA50
-            sma50 = close.rolling(50).mean().iloc[-1]
+            # Indicators
+            rsi = ta.rsi(df['Close'], length=14).iloc[-1]
+            bb = ta.bbands(df['Close'], length=20, std=2)
+            sma50 = ta.sma(df['Close'], length=50).iloc[-1]
+            close = df['Close'].iloc[-1]
+            upper = bb['BBU_20_2.0'].iloc[-1]
+            lower = bb['BBL_20_2.0'].iloc[-1]
 
             # Signal logic
-            if rsi < 30 and price < lower.iloc[-1]:
+            if rsi < 30 and close < lower:
                 sig = "🟢 STRONG BUY"
                 reason = "Oversold + broke below lower Bollinger Band"
-            elif rsi > 70 and price > upper.iloc[-1]:
+            elif rsi > 70 and close > upper:
                 sig = "🔴 STRONG SELL"
                 reason = "Overbought + broke above upper Bollinger Band"
-            elif price > sma50:
+            elif close > sma50:
                 sig = "🟢 BUY"
                 reason = "Price above 50-period SMA (bullish trend)"
             else:
                 sig = "🔴 SELL"
                 reason = "Price below 50-period SMA (bearish trend)"
 
-            results[name] = {"price": price, "rsi": rsi, "signal": sig, "reason": reason}
+            results[name] = {"price": close, "rsi": rsi, "signal": sig, "reason": reason}
         except:
             results[name] = None
     return results
@@ -84,10 +72,9 @@ def analyze_ticker(ticker):
 # Build main table
 rows = []
 for sym, name in watchlist.items():
-    data = analyze_ticker(sym)
-    if data["4 Hour"] is None:
+    data = analyze_asset(sym)
+    if data.get("4 Hour") is None:
         continue
-    
     row = {
         "Asset": f"{sym} — {name}",
         "Price": f"${data['4 Hour']['price']:,.4f}" if "USD" in sym else f"${data['4 Hour']['price']:,.2f}",
@@ -103,12 +90,11 @@ st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 st.divider()
 
 # Detailed charts + reasoning
-st.subheader("📈 Detailed Breakdown")
+st.subheader("📈 Technical Deep Dive")
 for sym, name in watchlist.items():
-    data = analyze_ticker(sym)
-    if data["4 Hour"] is None:
+    data = analyze_asset(sym)
+    if data.get("4 Hour") is None:
         continue
-    
     with st.expander(f"{sym} — {name}", expanded=False):
         price = data["4 Hour"]["price"]
         st.metric("Current Price", f"${price:,.4f}" if "USD" in sym else f"${price:,.2f}")
@@ -124,8 +110,8 @@ for sym, name in watchlist.items():
         
         st.subheader("Why the signal?")
         for tf in ["4 Hour", "1 Week", "1 Month"]:
-            if data[tf]:
-                st.write(f"**{tf}**: {data[tf]['signal']} — {data[tf]['reason']}")
+            if data.get(tf):
+                st.write(f"**{tf}**: {data[tf]['signal']} → {data[tf]['reason']}")
 
 st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')} • Auto-refreshing every 60 seconds")
 time.sleep(60)
