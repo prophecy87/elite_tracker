@@ -186,36 +186,53 @@ def vote_html(name, val, metric):
     return f'<div class="ind-item"><span class="{cls}">{name}</span><span style="color:#3a3a5c">{metric}</span></div>'
 
 # ── logic ──────────────────────────────────────────────────────────────────
-@st.cache_data(ttl=60)
 def analyze(ticker, interval, period):
     try:
         df = yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=True)
         if df.empty: return None
-        if isinstance(df.columns, pd.MultiIndex): df.columns = [c[0].lower() for c in df.columns]
-        else: df.columns = [c.lower() for c in df.columns]
+        
+        # Standardize columns for multi-index or single index
+        df.columns = [c[0].lower() if isinstance(c, tuple) else c.lower() for c in df.columns]
 
         close = df["close"]
         votes, metrics = {}, {}
         
+        # --- RSI ---
         rsi = ta.rsi(close, length=14).iloc[-1]
-        metrics["RSI"] = f"{rsi:.1f}"
         votes["RSI"] = 1 if rsi < 35 else (-1 if rsi > 65 else 0)
+        metrics["RSI"] = f"{rsi:.1f}"
 
+        # --- EMA CROSS ---
         e9, e21 = ta.ema(close, 9).iloc[-1], ta.ema(close, 21).iloc[-1]
         votes["EMA_CROSS"] = 1 if e9 > e21 else -1
-        metrics["EMA9/21"] = "▲" if e9 > e21 else "▼"
+        metrics["EMA_CROSS"] = "▲" if e9 > e21 else "▼"  # Key matched to 'votes'
 
+        # --- MACRO ---
+        # (Example of adding more indicators - just ensure keys match)
+        e50 = ta.ema(close, 50).iloc[-1]
+        votes["MACRO"] = 1 if close.iloc[-1] > e50 else -1
+        metrics["MACRO"] = "BULL" if close.iloc[-1] > e50 else "BEAR"
+
+        # Calculate Score
         raw_score = sum(votes.values())
         score = round((raw_score / len(votes)) * 50 + 50)
         
+        # Signal Logic
         if score >= 80: sig = "STRONG BUY"
         elif score >= 60: sig = "BUY"
         elif score >= 40: sig = "NEUTRAL"
         elif score >= 20: sig = "SELL"
         else: sig = "STRONG SELL"
 
-        return {"signal": sig, "score": score, "price": close.iloc[-1], "votes": votes, "metrics": metrics}
-    except: return None
+        return {
+            "signal": sig, 
+            "score": score, 
+            "price": close.iloc[-1], 
+            "votes": votes, 
+            "metrics": metrics
+        }
+    except Exception as e:
+        return None
 
 # ── UI ─────────────────────────────────────────────────────────────────────
 now = datetime.now().strftime("%H:%M:%S")
