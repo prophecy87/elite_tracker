@@ -646,7 +646,13 @@ with tab_table:
             row[tf] = r["signal"] if r else "—"
         row["Bull"] = p["total_bull"]
         row["Bear"] = p["total_bear"]
-        row["RSI"]  = f"{p['rsi']:.1f}"
+        # Using .get() prevents the KeyError by returning None (or a default) if 'rsi' is missing
+        rsi_value = p.get('rsi')
+
+        if rsi_value is not None:
+          row["RSI"] = f"{rsi_value:.1f}"
+        else:
+          row["RSI"] = "N/A"
         rows.append(row)
 
     df = pd.DataFrame(rows)
