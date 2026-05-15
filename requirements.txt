@@ -4,3 +4,4 @@ streamlit
 pandas-ta
 alpaca-py
 plotly
+pandas_ta_classic
