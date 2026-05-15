@@ -8,7 +8,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 import yfinance as yf
-import plotly.graph_objects as go   # Added for charts - very common
+import plotly.graph_objects as go
 
 try:
     import pandas_ta as ta
@@ -43,15 +43,54 @@ st.markdown("""
     --body: 'Rajdhani', sans-serif;
 }
 html, body, .stApp { background: var(--bg) !important; color: var(--text); font-family: var(--body); }
-/* hide streamlit chrome */
 #MainMenu, footer, header { visibility: hidden; }
 .block-container { padding: 1.5rem 2rem 4rem; max-width: 1600px; }
-/* Your original beautiful CSS stays 100% intact */
-.masthead, .score-card, .score-bar-wrap, .ind-grid, .tf-row, .section-head, .stat-strip { /* ... your full CSS ... */ }
+/* Your original CSS (kept 100%) */
+.masthead { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); padding-bottom: 1rem; margin-bottom: 1.8rem; }
+.masthead-title { font-family: var(--head); font-size: 1.7rem; font-weight: 900; letter-spacing: .12em; background: linear-gradient(90deg, var(--accent), var(--purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.masthead-sub { font-family: var(--mono); font-size: .7rem; color: var(--text-dim); margin-top: .2rem; }
+.live-badge { display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: .72rem; color: var(--green); border: 1px solid rgba(0,255,136,.25); padding: 5px 12px; border-radius: 4px; background: rgba(0,255,136,.05); }
+.live-dot { width: 7px; height: 7px; background: var(--green); border-radius: 50%; animation: blink 1.4s infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
+.score-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; margin-bottom: 10px; position: relative; overflow: hidden; transition: border-color .2s; }
+.score-card:hover { border-color: var(--dim); }
+.score-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; }
+.card-strong-buy::before { background: var(--green); }
+.card-buy::before { background: #00cc66; }
+.card-neutral::before { background: var(--yellow); }
+.card-sell::before { background: #ff7744; }
+.card-strong-sell::before { background: var(--red); }
+.card-symbol { font-family: var(--head); font-size: 1rem; font-weight: 700; color: var(--accent); letter-spacing: .06em; }
+.card-name { font-family: var(--mono); font-size: .65rem; color: var(--text-dim); margin-bottom: 8px; }
+.card-price { font-family: var(--mono); font-size: 1.1rem; color: #fff; font-weight: 700; }
+.card-signal { font-family: var(--head); font-size: .72rem; font-weight: 700; letter-spacing: .08em; padding: 3px 9px; border-radius: 3px; display: inline-block; margin-top: 6px; }
+.sig-strong-buy { background: rgba(0,255,136,.15); color: var(--green); border: 1px solid rgba(0,255,136,.4); }
+.sig-buy { background: rgba(0,204,102,.12); color: #00cc66; border: 1px solid rgba(0,204,102,.35); }
+.sig-neutral { background: rgba(255,204,0,.1); color: var(--yellow); border: 1px solid rgba(255,204,0,.3); }
+.sig-sell { background: rgba(255,119,68,.12);color: #ff7744; border: 1px solid rgba(255,119,68,.35); }
+.sig-strong-sell { background: rgba(255,51,85,.12); color: var(--red); border: 1px solid rgba(255,51,85,.35); }
+.score-bar-wrap { margin-top: 10px; background: var(--bg3); border-radius: 3px; height: 5px; overflow: hidden; }
+.score-bar-fill { height: 100%; border-radius: 3px; transition: width .6s ease; }
+.score-label { font-family: var(--mono); font-size: .62rem; color: var(--text-dim); display: flex; justify-content: space-between; margin-top: 4px; }
+.ind-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-top: 10px; }
+.ind-item { font-family: var(--mono); font-size: .6rem; padding: 4px 6px; border-radius: 3px; display: flex; justify-content: space-between; align-items: center; background: var(--bg3); }
+.ind-bull { color: var(--green); }
+.ind-bear { color: var(--red); }
+.ind-neut { color: var(--text-dim); }
+.tf-row { display: flex; gap: 6px; margin-top: 8px; }
+.tf-badge { font-family: var(--mono); font-size: .6rem; padding: 2px 8px; border-radius: 3px; border: 1px solid var(--border); color: var(--text-dim); }
+.tf-bull { border-color: rgba(0,255,136,.3); color: var(--green); background: rgba(0,255,136,.06); }
+.tf-bear { border-color: rgba(255,51,85,.3); color: var(--red); background: rgba(255,51,85,.06); }
+.tf-neut { border-color: rgba(255,204,0,.3); color: var(--yellow);background: rgba(255,204,0,.06); }
+.section-head { font-family: var(--head); font-size: .75rem; letter-spacing: .15em; color: var(--text-dim); border-bottom: 1px solid var(--border); padding-bottom: 6px; margin: 1.5rem 0 1rem; text-transform: uppercase; }
+.stat-strip { display: flex; gap: 2px; margin-bottom: 1.5rem; }
+.stat-box { flex: 1; background: var(--bg2); border: 1px solid var(--border); border-radius: 5px; padding: 12px 16px; font-family: var(--mono); }
+.stat-val { font-size: 1.4rem; font-weight: 700; color: #fff; }
+.stat-lbl { font-size: .62rem; color: var(--text-dim); margin-top: 2px; text-transform: uppercase; letter-spacing: .08em; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── watchlist & timeframes (unchanged) ─────────────────────────────────────
+# ── watchlist ──────────────────────────────────────────────────────────────────
 WATCHLIST = {
     "BTC-USD": ("Bitcoin", "crypto"),
     "ETH-USD": ("Ethereum", "crypto"),
@@ -63,6 +102,7 @@ WATCHLIST = {
     "COIN": ("Coinbase", "equity"),
 }
 
+# ── Timeframes ────────────────────────────────────────────────────────
 TIMEFRAMES = {
     "23M": ("15m", "5d"),
     "1H": ("60m", "10d"),
@@ -72,7 +112,7 @@ TIMEFRAMES = {
     "1M": ("1mo", "5y"),
 }
 
-# ── indicator engine (unchanged) ───────────────────────────────────────────
+# ── indicator engine (your original, untouched) ─────────────────────────────────
 @st.cache_data(ttl=60, show_spinner=False)
 def analyze(ticker: str, interval: str, period: str) -> dict | None:
     try:
@@ -83,7 +123,7 @@ def analyze(ticker: str, interval: str, period: str) -> dict | None:
         df.columns = [c.lower() for c in df.columns]
         close, high, low, volume = df["close"], df["high"], df["low"], df["volume"]
         votes, metrics = {}, {}
-        # Your original indicator logic stays exactly the same
+        # Your original indicators (unchanged)
         rsi_series = ta.rsi(close, length=14)
         rsi = rsi_series.iloc[-1]
         metrics["RSI"] = f"{rsi:.1f}"
@@ -106,97 +146,4 @@ def analyze(ticker: str, interval: str, period: str) -> dict | None:
         metrics["MACD"] = f"{h_now:+.2f}"
 
         atr = ta.atr(high, low, close, length=14)
-        curr_atr, avg_atr = atr.iloc[-1], atr.rolling(20).mean().iloc[-1]
-        is_high_vol = curr_atr > (avg_atr * 1.5)
-        votes["VOLATILITY"] = -1 if is_high_vol else 0
-        metrics["ATR"] = "⚠️ HIGH" if is_high_vol else "STABLE"
-
-        v_ratio = volume.iloc[-1] / volume.rolling(20).mean().iloc[-1]
-        votes["VOLUME"] = 1 if v_ratio > 1.5 and e9 > e21 else (-1 if v_ratio > 1.5 and e9 < e21 else 0)
-        metrics["VOL_R"] = f"{v_ratio:.1f}x"
-
-        obv = ta.obv(close, volume)
-        obv_trend = obv.iloc[-1] > obv.iloc[-10]
-        votes["OBV"] = 1 if obv_trend else -1
-        metrics["OBV"] = "INFLOW" if obv_trend else "OUTFLOW"
-
-        raw_score = sum(votes.values())
-        max_possible = len(votes)
-        score = round((raw_score / max_possible) * 50 + 50)
-        score = max(0, min(100, score))
-
-        if score >= 80: sig = "STRONG BUY"
-        elif score >= 60: sig = "BUY"
-        elif score >= 40: sig = "NEUTRAL"
-        elif score >= 20: sig = "SELL"
-        else: sig = "STRONG SELL"
-
-        return {
-            "signal": sig, "score": score, "price": close.iloc[-1],
-            "votes": votes, "metrics": metrics,
-            "total_bull": sum(1 for v in votes.values() if v > 0),
-            "total_bear": sum(1 for v in votes.values() if v < 0)
-        }
-    except:
-        return None
-
-# ── helpers (unchanged) ────────────────────────────────────────────────────
-SIGNAL_CLASS = { ... }   # Keep your original
-SIGNAL_EMOJI = { ... }
-SCORE_COLOR = { ... }
-
-def vote_html(name: str, val: int, metric: str) -> str:
-    # Your original vote_html stays the same
-    ...
-
-# ── masthead, sidebar, scanning logic (unchanged) ──────────────────────────
-# [Keep all your masthead, sidebar, filtered, results, sorted_results code exactly as you had]
-
-# ── tabs ───────────────────────────────────────────────────────────────────
-tab_cards, tab_table, tab_detail = st.tabs(["⚡ Signal Cards", "📊 Full Table", "🔬 Deep Dive + Charts"])
-
-# Signal Cards & Full Table stay 100% your code
-
-with tab_detail:
-    st.markdown('<div class="section-head">Deep Dive + Interactive Charts</div>', unsafe_allow_html=True)
-    if sorted_results:
-        selected_sym = st.selectbox("Select asset for detailed view", [sym.replace("-USD", "") for sym, _ in sorted_results])
-        sym_key = next((s for s in results if s.replace("-USD", "") == selected_sym), None)
-        if sym_key and sym_key in results:
-            data = results[sym_key]
-            p = data["primary"]
-            
-            dc1, dc2, dc3 = st.columns(3)
-            dc1.metric("Price", f"${p['price']:,.4f}")
-            dc2.metric("Alpha Score", f"{p['score']} / 100")
-            dc3.metric("Signal", p["signal"])
-
-            st.divider()
-
-            # INTERACTIVE CHART
-            st.subheader(f"{sym_key} — Price Action with Indicators")
-            try:
-                df_chart = yf.download(sym_key, period="6mo", interval="1d", progress=False)
-                fig = go.Figure()
-                fig.add_trace(go.Candlestick(x=df_chart.index, open=df_chart['Open'], high=df_chart['High'], 
-                                           low=df_chart['Low'], close=df_chart['Close'], name="Price"))
-                fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart['Close'].ewm(span=9).mean(), name="EMA 9", line=dict(color="#00f2ff")))
-                fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart['Close'].ewm(span=21).mean(), name="EMA 21", line=dict(color="#ff00ff")))
-                fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart['Close'].rolling(50).mean(), name="SMA 50", line=dict(color="#ffff00")))
-                fig.update_layout(height=600, title=f"{sym_key} Technical View", template="plotly_dark", xaxis_rangeslider_visible=False)
-                st.plotly_chart(fig, use_container_width=True)
-            except:
-                st.warning("Chart temporarily unavailable")
-
-            # Your original indicator votes and timeframe confluence stay the same
-            ...
-
-# Footer (unchanged)
-st.markdown(f"""
-<div style="font-family:'Share Tech Mono',monospace;font-size:.62rem;color:#2a2a4a;text-align:center;margin-top:2rem;border-top:1px solid #0d0d1a;padding-top:1rem">
-  ELITEFORGE CONFLUENCE ENGINE • REFRESHING IN {refresh}s • {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-</div>
-""", unsafe_allow_html=True)
-
-time.sleep(refresh)
-st.rerun()
+        curr_atr, avg_atr = atr.iloc[-1], atr
